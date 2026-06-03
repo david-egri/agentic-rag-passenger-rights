@@ -4,6 +4,21 @@ Operational guide for working on this repo with Claude Code. Read `notes/PROJECT
 
 ---
 
+## Document map (where things live — route updates here)
+
+Each doc has one job. When something changes, update the **one** file that owns it:
+
+| Need | Home | Notes |
+|------|------|-------|
+| *How to work* — conventions, guardrails, non-negotiables, commands | **CLAUDE.md** (this file) | Changes rarely — only when a rule/convention changes |
+| *What & when* — phased plan + live status | **PLAN.md** | The living doc; update as phases progress |
+| *Why it changed* — findings, trade-offs, simplifications | **DECISIONS.md** | Append-only; link entries from PLAN.md |
+| *Why* (original design rationale) | **notes/PROJECT_PROPOSAL.md** | Near-frozen reference; don't rewrite — add a "superseded by [[decision]]" pointer instead |
+
+**Routing rule:** scope/status/next-phase changed → `PLAN.md`. Why you changed it → `DECISIONS.md` (and link it from the PLAN entry). A convention/rule changed → here. Design rationale stays put in the proposal.
+
+---
+
 ## What this project is
 
 An **Agentic RAG chatbot** (Python + **LangGraph**) for **EU air passenger rights** (Regulation (EC) No 261/2004). It (a) answers questions about passenger rights using grounded retrieval and (b) computes flight-disruption compensation using a deterministic calculator tool. UI is **Streamlit**; everything runs locally and is containerized.
@@ -101,18 +116,9 @@ Framing to be ready to defend: this is a **directed/structured agent** (the grap
 
 ---
 
-## Build order (when starting from scratch)
+## Build order
 
-1. Scaffold + `llm.py` (with dummy backend) + Makefile
-2. **Calculator + unit tests first** (deterministic; unblocks eval)
-3. Ingestion → ChromaDB; sanity-check retrieval
-4. RAG subgraph standalone (grounded + cited)
-5. Main graph + router + state; wire subgraph + calculator
-6. Streamlit UI with trace panel
-7. Functional eval (15 Qs); iterate prompts
-8. Load test (real + dummy); write up latency/bottleneck/optimizations
-9. Dockerfile + docker-compose
-10. README last
+The phased build plan and its live status live in **`PLAN.md`** (see the Document map above). The short version: calculator + tests first (it's the eval ground truth), then ingestion, then the RAG subgraph, then the main graph, UI, eval, load test, Docker, README last. Update `PLAN.md` as phases complete; log the *why* behind any plan change in `DECISIONS.md`.
 
 ---
 

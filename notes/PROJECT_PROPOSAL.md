@@ -330,6 +330,7 @@ Each item lists the **path it exercises** and the **expected answer / ground tru
 eu261-agentic-rag/
 ├── README.md                      # problem, architecture + design justification, eval/perf summary, install/run
 ├── CLAUDE.md                      # Claude Code working agreement (conventions, commands, non-negotiables)
+├── PLAN.md                        # living phased implementation plan + status
 ├── DECISIONS.md                   # running log of implementation decisions (trade-offs, revisit-later choices)
 ├── notes/
 │   ├── PROJECT_PROPOSAL.md        # this file — full design rationale
