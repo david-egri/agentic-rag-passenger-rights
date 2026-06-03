@@ -21,6 +21,12 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Git workflow: phase branches, merge commits, phase tags  (`git-workflow`)
+**[decision]** One branch per phase named `phase/N-slug`; integrate into `main` via `--no-ff` merge commits; annotate each phase's merge commit with a `phase-N-slug` tag; keep phase branches (don't delete) and push `main` + branches + tags. Non-phase branches use `type/slug` (`fix/`, `docs/`, `chore/`, `refactor/`, `spike/`), chosen per case. Full convention in CLAUDE.md (Git workflow).
+**Why:** Merge commits keep a visible per-phase boundary in history; tags make each completed phase a referenceable checkpoint (easy to diff/checkout a phase); kept+pushed branches preserve the per-phase record on the remote. Matches the branch-per-phase plan and the documentation-routing setup.
+**How to apply:** branch from up-to-date `main`; publish the branch early; `git merge --no-ff` then `git tag -a phase-N-slug`; push `main`, the branch, and the tag.
+Related: [[build-approach-ui-spine]].
+
 ## 2026-06-03 — Drop the dummy LLM backend for now (keep the seam)  (`drop-dummy-llm`)
 **[revisit]** No dummy/stub LLM backend is built. Only `ollama` is wired — but behind a pluggable `LLM_BACKEND` seam (`get_llm()`), so one can be added later as a single backend branch.
 **Why:** The brief only offers the dummy as a *hardware fallback* ("if [a real local LLM] is not possible"), which isn't our situation. Its one genuine engineering benefit — isolating LLM latency in the load test — is a late-phase concern, so carrying a stub (and its per-call-site structured stubs) through P1–P4 is cost without payoff. The bottleneck analysis will instead lean on per-node timing from the trace.

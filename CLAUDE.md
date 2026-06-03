@@ -118,6 +118,30 @@ Framing to be ready to defend: this is a **directed/structured agent** (the grap
 
 ---
 
+## Git workflow
+
+One branch per phase; integrate into `main` with **merge commits** and **tag every phase merge**.
+
+- **Phase branches:** `phase/N-slug` — canonical names: `phase/1-llm-chat`, `phase/2-corpus-rag`, `phase/3-calculator`, `phase/4-agent-assembly`, `phase/5-eval-loadtest`, `phase/6-docker-readme`.
+- **Non-phase branches:** `type/slug` to stay consistent — `fix/…`, `docs/…`, `chore/…`, `refactor/…`, `spike/…`. Pick the type that fits when the need arises.
+- **Merge strategy:** always `--no-ff` (preserve a merge commit per phase; no squash/rebase-onto-main).
+- **Tags:** annotated tag on the **merge commit**, named `phase-N-slug` (matches the branch, e.g. `phase-1-llm-chat`).
+- **Keep phase branches** after merging — do not delete them.
+- **Remote:** push `main`, every phase branch, and the tags.
+
+Per-phase sequence:
+```bash
+git switch -c phase/1-llm-chat main          # branch from up-to-date main
+git push -u origin phase/1-llm-chat          # publish the branch early
+# … commit work …
+git switch main
+git merge --no-ff phase/1-llm-chat           # merge commit
+git tag -a phase-1-llm-chat -m "Phase 1: LLM backend + chat UI"
+git push origin main phase/1-llm-chat phase-1-llm-chat   # main + (kept) branch + tag
+```
+
+---
+
 ## Build order
 
 The phased build plan and its live status live in **`PLAN.md`** (see the Document map above). The short version (Streamlit-as-spine): LLM backend + minimal chat UI → corpus + RAG subgraph → calculator → agentic assembly → eval + load test → Docker + README. The UI grows a new visualization each phase. Update `PLAN.md` as phases complete; log the *why* behind any plan change in `DECISIONS.md`.

@@ -2,7 +2,7 @@
 
 The living implementation plan — **what** we're building and **when**, plus current status. This is the one place to update as work progresses. It is forward-looking; the *why* behind any change to the plan goes in `DECISIONS.md` (link it from the relevant phase). See the Document map in `CLAUDE.md` for how the docs divide responsibility.
 
-**Workflow:** one branch per phase. Each phase's PR ticks that phase's boxes here and refines the *next* phase with whatever was learned. Keep upcoming phases editable — they are expected to change.
+**Workflow:** one branch per phase (`phase/N-slug`), merged into `main` with a `--no-ff` merge commit that gets an annotated `phase-N-slug` tag; phase branches are kept and pushed. See the Git workflow section in `CLAUDE.md` for the full convention. Each phase merge ticks that phase's boxes here and refines the *next* phase with whatever was learned. Keep upcoming phases editable — they are expected to change.
 
 **Build philosophy (see DECISIONS):**
 - **Streamlit is the spine — a tab per layer.** The UI exists from Phase 1 and gains a **new tab** each phase (Chat → Corpus → RAG → Calculator → Agent), so every layer stays independently runnable and demonstrable. The first four are **inspector tabs** (dev/demo surfaces); the **Agent** tab is the product that satisfies the task's UI requirement. Build display pieces once (chunk card, citation list, trace-step renderer) and reuse across tabs. The UI doubles as the functional-test harness.
