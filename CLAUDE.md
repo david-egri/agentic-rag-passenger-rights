@@ -83,6 +83,7 @@ Backend switch: `LLM_BACKEND=ollama` (default) or `LLM_BACKEND=dummy`. Configure
 - **Bounded loops** — cap the corrective-RAG rewrite retries to keep latency sane.
 - **Stream the graph** in Streamlit (`graph.stream`) and append each node's output to the `trace` panel so the user watches the agent work (this scores the "demonstrate agent operation" requirement).
 - **Run independent subtasks concurrently** for `mixed` queries where practical.
+- **Log implementation decisions in `DECISIONS.md`** — whenever a trade-off is made, an arbitrary/placeholder choice is taken that must be revised later, or a non-obvious gotcha surfaces, append a dated entry (newest first) using the tags in that file.
 
 ---
 
