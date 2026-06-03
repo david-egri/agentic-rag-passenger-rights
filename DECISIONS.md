@@ -21,6 +21,13 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Drop the dummy LLM backend for now (keep the seam)  (`drop-dummy-llm`)
+**[revisit]** No dummy/stub LLM backend is built. Only `ollama` is wired — but behind a pluggable `LLM_BACKEND` seam (`get_llm()`), so one can be added later as a single backend branch.
+**Why:** The brief only offers the dummy as a *hardware fallback* ("if [a real local LLM] is not possible"), which isn't our situation. Its one genuine engineering benefit — isolating LLM latency in the load test — is a late-phase concern, so carrying a stub (and its per-call-site structured stubs) through P1–P4 is cost without payoff. The bottleneck analysis will instead lean on per-node timing from the trace.
+**How to apply:** Nodes must call the `get_llm()` abstraction, never Ollama directly, so the seam stays cheap to extend. Don't scatter Ollama client calls across nodes.
+**Revisit if:** the load test's per-node timing isn't conclusive enough to pin the bottleneck → add a stub backend for a clean real-vs-stub A/B. (Also the original fallback reason returns if the target hardware can't run the chosen model.)
+Related: [[build-approach-ui-spine]], [[python-env]].
+
 ## 2026-06-03 — Python env: venv + pinned requirements + Python 3.12  (`python-env`)
 **[decision]** Local env is stdlib **`venv`** with deps pinned in **`requirements.txt`**; Python pinned to **3.12** via `.python-version`; the Dockerfile uses `python:3.12-slim` so local and container match. No Poetry/conda/uv. Resolves the old `requirements.txt / pyproject.toml` ambiguity in the proposal repo tree → `requirements.txt`.
 **Why:** Lowest-ceremony option consistent with the "no Make / plain commands" stance, no extra tooling for a reviewer to install, and it closes the reproducibility gaps the docs had left open (no isolation strategy, no Python version pin). 3.12 has solid wheel support across LangGraph/Chroma/sentence-transformers.
@@ -40,7 +47,7 @@ Related: [[build-approach-ui-spine]].
 
 ## 2026-06-03 — Build approach: Streamlit-as-spine, reordered, no Make, functional-first  (`build-approach-ui-spine`)
 **[decision]** Reworked the build order and process: (1) **Streamlit is the spine** — a minimal chat UI exists from Phase 1 and gains a visualization each phase; (2) **reordered** to LLM backend + chat → corpus + RAG → calculator → agentic assembly → eval + load test → Docker + README; (3) **dropped Make** in favor of plain documented commands; (4) **functional testing** (through the UI + the 15-Q eval) over classical unit tests.
-**Why:** The UI-as-spine keeps every stage runnable and demonstrable, and doubles as the functional-test harness — which is why functional testing through it is sufficient for most of the app. LLM-first de-risks the Ollama/dummy switch immediately and gives something runnable on day one. Make added ceremony without value for a prototype this size. Reordering breaks no acceptance criteria (those constrain the final artifact, not build order).
+**Why:** The UI-as-spine keeps every stage runnable and demonstrable, and doubles as the functional-test harness — which is why functional testing through it is sufficient for most of the app. LLM-first de-risks the Ollama backend immediately and gives something runnable on day one. Make added ceremony without value for a prototype this size. Reordering breaks no acceptance criteria (those constrain the final artifact, not build order).
 **Exceptions / guards:**
 - The **calculator keeps a small direct test set** — it's deterministic, trivially testable, and produces the compensation amounts (and eval ground truth); a wrong euro figure is the worst failure mode, so verifying it only through a chat box is too weak.
 - The retrieval tool (`retrieve_passenger_rights`) is born in the **corpus/RAG** phase (the subgraph uses it); the dedicated tools phase is the **calculator**.

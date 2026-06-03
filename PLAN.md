@@ -23,12 +23,12 @@ The living implementation plan — **what** we're building and **when**, plus cu
 ## Phase 1 — LLM backend + minimal chat UI  `[ ]`
 **Goal:** A runnable spine on day one — talk to the model directly.
 - [ ] Python env: `.python-version` pinned to **3.12**, stdlib `venv`, pinned `requirements.txt` (no Poetry/conda/uv)
-- [ ] `src/llm.py` with `LLM_BACKEND=ollama|dummy` switch; `temperature=0`
+- [ ] `src/llm.py` exposing a single `get_llm()` behind an `LLM_BACKEND` seam (only `ollama` wired now; keep it pluggable so a stub can be added later); `temperature=0`
 - [ ] `config.yaml` + env loading (model names, Ollama URL, top-k — no hardcoding)
 - [ ] Streamlit app shell (`app/streamlit_app.py`) with a tab layout + a **Chat (LLM)** tab wired to the LLM
 - [ ] Sidebar showing active backend / model / top-k (persistent across tabs)
 - [ ] Pinned `requirements.txt`; run command documented (`streamlit run app/streamlit_app.py`)
-**Done when:** you can chat with both backends from the Chat tab; dummy works fully offline.
+**Done when:** you can chat with the Ollama model from the Chat tab.
 
 ## Phase 2 — Corpus + RAG subgraph  `[ ]`
 **Goal:** Grounded, cited retrieval that self-corrects — visible in the UI.
@@ -59,7 +59,7 @@ The living implementation plan — **what** we're building and **when**, plus cu
 ## Phase 5 — Functional eval + load test  `[ ]`
 **Goal:** Measure correctness and latency (both are graded deliverables; the eval is itself a functional test).
 - [ ] `eval/eval_set.yaml` (15 Qs + ground truth) + an eval runner; methodology write-up
-- [ ] Load test (50–200 queries) supporting `LLM_BACKEND=dummy` to isolate LLM time
+- [ ] Load test (50–200 queries); attribute the bottleneck via **per-node timing** in the trace (LLM nodes vs. the rest). If that's not conclusive, consider adding a stub backend for a clean LLM-isolated A/B (deferred — see DECISIONS)
 - [ ] Latency metrics + bottleneck + 1–2 optimizations
 **Done when:** eval and load test run via documented commands and results are recorded.
 

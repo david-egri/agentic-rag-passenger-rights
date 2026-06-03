@@ -29,7 +29,7 @@ This is an **interview prototype**. Optimize for a small, clean, reproducible, w
 
 ## Non-negotiables (do not violate)
 
-1. **No paid APIs.** LLM runs locally via **Ollama**, or use the **dummy LLM backend** (`LLM_BACKEND=dummy`). Never add an OpenAI/Anthropic/etc. paid client.
+1. **No paid APIs.** LLM runs locally via **Ollama**. Never add an OpenAI/Anthropic/etc. paid client. Keep the backend behind a pluggable `LLM_BACKEND` seam in `llm.py` (a dummy/stub backend was deferred — see `DECISIONS.md` — but nodes must call a single `get_llm()` abstraction so it can be added later without surgery).
 2. **Anchor to the in-force rules.** Use the **current** Reg. 261/2004 figures (3-hour threshold; €250 / €400 / €600 distance bands). The 2025 reform is **not enacted** — do not encode proposed thresholds. Note the pending reform only as a README caveat.
 3. **Ground everything; cite always.** Rights answers come *only* from retrieved chunks and must carry citations (source + article). If retrieval doesn't support an answer, say so — never fabricate.
 4. **Out-of-scope → fallback.** Questions outside Reg. 261/2004 (baggage fees, pets, visas, airline pricing) must route to the fallback node, not get a made-up answer.
@@ -44,7 +44,7 @@ This is an **interview prototype**. Optimize for a small, clean, reproducible, w
 - **Orchestration:** LangGraph (main graph + a separate compiled RAG subgraph)
 - **Vector store:** ChromaDB (persisted at `data/chroma/`)
 - **Embeddings:** `sentence-transformers` — `BAAI/bge-small-en-v1.5` (fallback `all-MiniLM-L6-v2`)
-- **LLM:** local instruct model via Ollama (7–8B default; 3B for routing/extraction on constrained hardware) — switchable to `dummy`
+- **LLM:** local instruct model via Ollama (7–8B default; 3B for routing/extraction on constrained hardware), behind a pluggable `LLM_BACKEND` seam
 - **UI:** Streamlit
 - **Runtime/env:** Python **3.12** (pinned via `.python-version`), isolated with stdlib **`venv`**, deps pinned in `requirements.txt` (no Poetry/conda/uv)
 - **Container:** Docker base `python:3.12-slim` (matches local) (+ docker-compose for app + ollama)
@@ -61,12 +61,12 @@ pip install -r requirements.txt          # install pinned deps
 python -m src.ingest                      # parse + chunk + embed corpus -> ChromaDB (idempotent)
 streamlit run app/streamlit_app.py        # launch the Streamlit UI
 python -m eval.functional_eval            # run functional eval over eval/eval_set.yaml
-python -m eval.loadtest                   # run the 50-200 query load test (supports LLM_BACKEND=dummy)
+python -m eval.loadtest                   # run the 50-200 query load test
 pytest tests/test_calculator.py           # the one classic-test exception (deterministic calculator)
 docker compose up                         # app + ollama end-to-end
 ```
 
-(Module paths are indicative — match them to the actual layout as it lands.) Backend switch: `LLM_BACKEND=ollama` (default) or `LLM_BACKEND=dummy`. Configure model names, Ollama URL, and top-k in `config.yaml` / env — never hardcode.
+(Module paths are indicative — match them to the actual layout as it lands.) Backend: `LLM_BACKEND=ollama` (only one wired for now; the seam allows adding others). Configure model names, Ollama URL, and top-k in `config.yaml` / env — never hardcode.
 
 ---
 
@@ -130,10 +130,10 @@ The phased build plan and its live status live in **`PLAN.md`** (see the Documen
 - **OpenFlights data is ODbL** — attribute it in `data/SOURCES.md`. EUR-Lex content is reusable with source acknowledgment.
 - **EU261 route scope is asymmetric**: EU-departing flights (any carrier) are covered; non-EU → EU is covered only on EU carriers. Make sure `eligibility`/RAG reflects this.
 - **Own-airline staff strike ≠ extraordinary** (compensation due); weather/ATC/security generally are extraordinary (no compensation, but care/rerouting may apply).
-- **Expected load-test bottleneck** is local LLM generation latency (plus the rewrite loop) — the calculator and vector search are negligible. Use dummy mode to confirm by isolating LLM time.
+- **Expected load-test bottleneck** is local LLM generation latency (plus the rewrite loop) — the calculator and vector search are negligible. Confirm with **per-node timing** in the trace (LLM nodes vs. the rest); a stub/dummy backend for a clean LLM-isolated A/B is a deferred option if per-node timing isn't conclusive.
 
 ---
 
 ## Definition of done
 
-See the acceptance checklist at the end of `notes/PROJECT_PROPOSAL.md` (§13). In short: ≥5 nodes with conditional routing, decomposition, typed state, ≥2 tools (≥1 non-retrieval), modular RAG subgraph not counted in the 5, structure-aware corpus processing with citations, local/dummy LLM, Streamlit UI showing agent steps, Dockerfile (+ compose bonus), functional eval (15 Qs) + load test (50–200 queries) with bottleneck analysis, and a complete reproducible README.
+See the acceptance checklist at the end of `notes/PROJECT_PROPOSAL.md` (§13). In short: ≥5 nodes with conditional routing, decomposition, typed state, ≥2 tools (≥1 non-retrieval), modular RAG subgraph not counted in the 5, structure-aware corpus processing with citations, local LLM (Ollama), Streamlit UI showing agent steps, Dockerfile (+ compose bonus), functional eval (15 Qs) + load test (50–200 queries) with bottleneck analysis, and a complete reproducible README.

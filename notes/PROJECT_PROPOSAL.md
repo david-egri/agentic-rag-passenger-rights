@@ -11,7 +11,7 @@
 - **Domain:** EU air passenger rights (Regulation (EC) No 261/2004) — a passenger-facing assistant that (a) explains rights and (b) computes compensation entitlement.
 - **Why this domain:** naturally produces conditional routing (info-lookup vs. computation), a genuine non-retrieval tool (distance + rules math), decomposable mixed questions, a tiny authoritative free corpus, and deterministic ground truth for evaluation.
 - **Corpus:** 3 authoritative text documents (regulation + interpretive guidelines + plain-language summary) for RAG, plus the OpenFlights airport dataset + a small rules table for the calculator tool. All free.
-- **Stack:** Python, LangGraph, ChromaDB (vector store), `sentence-transformers` (local embeddings), local LLM via **Ollama** (with a **dummy/stub LLM** mode for CI and load testing), Streamlit UI, Docker + docker-compose.
+- **Stack:** Python, LangGraph, ChromaDB (vector store), `sentence-transformers` (local embeddings), local LLM via **Ollama** (behind a pluggable `LLM_BACKEND` seam; a stub backend is deferred — see §6.3), Streamlit UI, Docker + docker-compose.
 - **Agentic shape:** main graph with 7 nodes (≥5 required) + a modular **RAG subgraph** (does not count toward the 5) that implements corrective RAG (retrieve → grade → optional rewrite → generate). Two tools: `retrieve_passenger_rights` (retrieval) and `calculate_compensation` (non-retrieval).
 
 ---
@@ -246,8 +246,10 @@ Deterministic, testable, no LLM:
 - 7–8B instruct models handle structured routing + grounded answering well and run on a consumer GPU (or CPU, slowly); below ~3B, routing/extraction reliability drops.
 - Quantized GGUF (Q4/Q5) cuts memory and latency at a small quality cost — worth it for the prototype and relevant to your bottleneck analysis.
 
-### 6.3 Dummy LLM mode (build this — it's not just a fallback)
-Provide a `DummyLLM` (config flag `LLM_BACKEND=dummy`) returning canned/structured responses. Two reasons: (1) the brief explicitly permits dummy LLMs if local resources don't allow a real one, and (2) it lets you run the **load test against orchestration + retrieval only**, isolating LLM latency from graph overhead — directly useful for the bottleneck analysis in §8.
+### 6.3 LLM backend seam (dummy backend deferred)
+Keep the LLM behind a pluggable `LLM_BACKEND` seam in `llm.py` — nodes call a single `get_llm()` abstraction, never Ollama directly. Only `ollama` is wired for now.
+
+A stub/`DummyLLM` backend (returning canned/structured responses) was **deferred** — it isn't required (the brief only permits it as a *fallback* when local resources can't run a real model, which isn't our case). Its one real benefit is load-test LLM-isolation, and the bottleneck analysis (§8) will use **per-node timing** instead. Because the seam exists, a stub can be added later as a single backend branch if per-node timing proves inconclusive. See DECISIONS (`drop-dummy-llm`).
 
 ---
 
@@ -255,7 +257,7 @@ Provide a `DummyLLM` (config flag `LLM_BACKEND=dummy`) returning canned/structur
 
 **Tabs as the spine.** The UI grows one tab per build phase, so each layer stays independently demonstrable. The first four are **inspector tabs** (dev/demo surfaces); the **Agent** tab is the product that satisfies the brief's UI requirement (**the agent's main steps** + **the RAG result**).
 
-1. **Chat (LLM)** — raw chat with the active backend (ollama/dummy). Sanity-checks the model layer.
+1. **Chat (LLM)** — raw chat with the Ollama model. Sanity-checks the model layer.
 2. **Corpus** — browse the processed corpus: chunks per document, the Article/Recital structure boundaries, per-chunk metadata, and counts. Makes "quality processing" + structure-aware chunking visible.
 3. **RAG** — enter a query and watch the corrective loop: retrieved chunks (scores + metadata) → **grade** decision → **rewritten query** (if any) → **generated** answer with citations. This surfaces the most "agentic" part of the system.
 4. **Calculator** — flight inputs → `{distance, band, amount}`; exercises the deterministic non-retrieval tool.
@@ -281,8 +283,8 @@ Implementation tip: stream the LangGraph run (`graph.stream`) and append each no
 
 ### 8.2 Performance / load test (`eval/load_test.py`)
 - Replay **50–200 queries** (sample/repeat the eval set) through the graph; support concurrency.
-- Report **latency p50 / p95 / p99**, mean, and throughput (queries/min). Optionally break latency down **per node** (retrieval vs. LLM generation vs. calculator) using the trace timestamps.
-- **Run it twice:** once with the real LLM, once with `LLM_BACKEND=dummy`, to separate LLM time from orchestration time.
+- Report **latency p50 / p95 / p99**, mean, and throughput (queries/min). Break latency down **per node** (retrieval vs. LLM generation vs. calculator) using the trace timestamps — this is the primary evidence for the bottleneck.
+- If per-node timing isn't conclusive, the deferred option is to add a stub backend and run the test twice (real vs. stub) to isolate LLM time — see §6.3.
 - **Expected bottleneck:** local LLM generation latency (and the corrective-RAG rewrite loop when it triggers). The deterministic calculator and vector search will be negligible by comparison.
 - **Optimization suggestions to write up (pick 1–2 concrete ones):**
   1. Use a smaller/quantized model for the high-frequency routing+extraction calls; reserve the larger model for final synthesis.
@@ -324,7 +326,7 @@ Each item lists the **path it exercises** and the **expected answer / ground tru
 3. **"Not legal advice" disclaimer** in every answer that interprets the rules.
 4. **Reproducibility hygiene** (a named grading criterion): pin Python (3.12, via `.python-version`) and isolate with a stdlib `venv`, pin dependency versions in `requirements.txt`, set `temperature=0` and a fixed seed where supported, commit the frozen corpus snapshot + `SOURCES.md`, make ingestion idempotent, and document the plain run commands (create venv, install, ingest, then `streamlit run`). The Dockerfile pins the same `python:3.12-slim` base so local and container match.
 5. **Observability for the UI requirement.** The `trace` in state isn't optional polish — it's what makes the "show the agent's steps" requirement real.
-6. **Config over hardcoding.** `LLM_BACKEND`, model names, top-k, Ollama URL via env/`config.yaml`. Enables the dummy-mode load test and clean Docker wiring.
+6. **Config over hardcoding.** `LLM_BACKEND`, model names, top-k, Ollama URL via env/`config.yaml`. Keeps the LLM backend pluggable (a stub can be added later) and the Docker wiring clean.
 7. **Unit tests for the calculator.** Deterministic and trivial to test — easy, high-credibility coverage (distance bands, threshold, reduction rule).
 8. **Licensing note.** OpenFlights data is ODbL — attribute it in `SOURCES.md`. EUR-Lex content is reusable with source acknowledgment.
 9. **Snapshot/reform caveat** in the README (see §1.5).
@@ -364,7 +366,7 @@ eu261-agentic-rag/
 │   │   ├── retrieval.py           # retrieve_passenger_rights
 │   │   └── compensation.py        # calculate_compensation (+ haversine, airport lookup)
 │   ├── ingest/                    # parse + chunk + embed + persist
-│   └── llm.py                     # backend switch: ollama | dummy
+│   └── llm.py                     # pluggable LLM backend seam (ollama; stub deferrable)
 ├── app/streamlit_app.py
 ├── eval/
 │   ├── eval_set.yaml              # the 15 questions + ground truth
@@ -391,7 +393,7 @@ The live, phased build plan and its status are maintained in **`PLAN.md`** (the 
 - [ ] **≥ 2 tools**, with **≥ 1 non-retrieval** (calculator); both as explicit `@tool`s.
 - [ ] **Modular RAG subgraph** — compiled `StateGraph` added via `add_node`, **not** counted among the 5.
 - [ ] **Quality + scalable corpus processing** (structure-aware chunking + metadata + citations; generic drop-in ingestion loader).
-- [ ] **No paid API**; local LLM justified, **dummy mode** available.
+- [ ] **No paid API**; local LLM (Ollama) justified; backend kept behind a pluggable seam.
 - [ ] **Streamlit UI** shows agent steps + RAG result + citations + disclaimer.
 - [ ] **Dockerfile** present; **docker-compose.yml** bonus.
 - [ ] **Functional eval** (15 Qs) with methodology + results.
