@@ -20,17 +20,17 @@ The living implementation plan — **what** we're building and **when**, plus cu
 - [x] DECISIONS.md (decision log) + this PLAN.md
 - [x] Graph diagram reflects router-as-node + independent fan-out branches
 
-## Phase 1 — LLM backend + minimal chat UI  `[ ]`
+## Phase 1 — LLM backend + minimal chat UI  `[x]`
 **Goal:** A runnable spine on day one — talk to the model directly.
-- [ ] Python env: `.python-version` pinned to **3.12**, stdlib `venv`, pinned `requirements.txt` (no Poetry/conda/uv)
-- [ ] `.gitignore`: `.venv/`, `__pycache__/`, `*.pyc`, `data/chroma/` (chroma is derived, rebuilt from corpus)
-- [ ] `ollama pull qwen2.5:3b` (pinned default model — see DECISIONS `llm-model`)
-- [ ] `src/llm.py` exposing a single `get_llm()` behind an `LLM_BACKEND` seam (only `ollama` wired now; keep it pluggable so a stub can be added later); `temperature=0`
-- [ ] `config.yaml` + env loading — knobs: `llm_backend`, `model` (`qwen2.5:3b`), `ollama_url`, `top_k`, `rewrite_max_retries`, `embedding_model` (no hardcoding)
-- [ ] Streamlit app shell (`app/streamlit_app.py`) with a tab layout + a **Chat (LLM)** tab wired to the LLM
-- [ ] Sidebar showing active backend / model / top-k (persistent across tabs)
-- [ ] Pinned `requirements.txt`; run command documented (`streamlit run app/streamlit_app.py`)
-**Done when:** you can chat with the `qwen2.5:3b` model from the Chat tab.
+- [x] Python env: `.python-version` pinned to **3.14** (3.12 unavailable locally — see DECISIONS `python-314`), stdlib `venv`, pinned `requirements.txt` (no Poetry/conda/uv)
+- [x] `.gitignore`: `.venv/`, `__pycache__/`, `*.pyc`, `data/chroma/` (chroma is derived, rebuilt from corpus)
+- [x] Model present: `qwen2.5:3b-instruct` already pulled in Ollama (tag note — see DECISIONS `model-tag`)
+- [x] `src/llm.py` exposing a single `get_llm()` behind an `LLM_BACKEND` seam (only `ollama` wired now; keep it pluggable so a stub can be added later); `temperature=0`
+- [x] `config.yaml` + env loading (`src/config.py`) — knobs: `llm_backend`, `model` (`qwen2.5:3b-instruct`), `ollama_url`, `temperature`, `top_k`, `rewrite_max_retries`, `embedding_model` (no hardcoding; env overrides file)
+- [x] Streamlit app shell (`app/streamlit_app.py`) with a tab layout (Chat active; Corpus/RAG/Calculator/Agent graceful placeholders) + a **Chat (LLM)** tab wired to the LLM (streamed)
+- [x] Sidebar showing active backend / model / top-k (persistent across tabs)
+- [x] Pinned `requirements.txt`; run command documented (`streamlit run app/streamlit_app.py`)
+**Done when:** you can chat with the `qwen2.5:3b-instruct` model from the Chat tab. ✅ verified — round-trip + streaming through `get_llm()` and headless Streamlit boot (HTTP 200).
 
 ## Phase 2 — Corpus + RAG subgraph  `[ ]`
 **Goal:** Grounded, cited retrieval that self-corrects — visible in the UI.
@@ -77,3 +77,4 @@ The living implementation plan — **what** we're building and **when**, plus cu
 Append plan-affecting changes here (with a link to the DECISIONS.md entry that explains *why*). Keeps the phase sections clean while preserving the trail.
 
 - 2026-06-03 — Reordered build: UI-as-spine, LLM-first, corpus/RAG → calculator → agentic assembly; dropped Make; functional-testing with a calculator exception. See DECISIONS `build-approach-ui-spine`.
+- 2026-06-03 — Phase 1 built: Python pin 3.12 → **3.14** (only 3.14 available locally; Phase 1 stack has cp314 wheels — risk to re-check at Phase 2 ML deps), model default `qwen2.5:3b-instruct`. See DECISIONS `python-314`, `model-tag`.

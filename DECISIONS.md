@@ -21,6 +21,17 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Python pin moved 3.12 → 3.14  (`python-314`)
+**[revisit]** The local machine only had Python **3.14.5** installed (no 3.12). Rather than `brew install python@3.12`, we moved the pin to **3.14**: `.python-version` = `3.14`, and the Docker base becomes `python:3.14-slim` (Phase 6). Supersedes the 3.12 decision in [[python-env]].
+**Why:** Lowest-friction path on the available machine; 3.14 had native cp314 wheels for the entire Phase 1 stack (streamlit 1.58, langchain-ollama 1.1, pydantic, numpy, pyarrow) — `pip install` resolved cleanly with no source builds.
+**Revisit if:** Phase 2 ML deps (chromadb, sentence-transformers, torch) lack cp314 wheels → fall back to 3.13 or 3.12 (would then require installing that interpreter). This is the main open risk of the 3.14 choice.
+Related: [[python-env]], [[build-approach-ui-spine]].
+
+## 2026-06-03 — Local model tag is `qwen2.5:3b-instruct`  (`model-tag`)
+**[decision]** `config.yaml` `model` defaults to **`qwen2.5:3b-instruct`** — the tag already pulled locally — rather than the canonical `qwen2.5:3b` written in the docs. Same underlying Qwen2.5 3B Instruct model; avoids a redundant ~1.9 GB pull. Refines [[llm-model]].
+**Why:** The instruct tag was already present in Ollama; `qwen2.5:3b` resolves to the same instruct weights anyway. The `model` knob keeps it swappable, so the literal string is not load-bearing.
+Related: [[llm-model]].
+
 ## 2026-06-03 — Working agreement: plan-first, user drives commits/merges  (`working-agreement`)
 **[decision]** Per-phase loop: orient (read PLAN next phase + skim DECISIONS) → **post a short plan and wait for approval before coding** → branch+push → build (ticking PLAN, logging to DECISIONS) → **the user explicitly triggers every commit, merge, and tag** (never autonomous, even mid-phase) → on approval, update PLAN status and do the merge/tag/push. Documented in CLAUDE.md (Working agreement).
 **Why:** Keeps the user in control of integration and history, and makes the collaboration loop survive fresh contexts (a cold agent otherwise wouldn't know to plan-first or that the user drives commits). Matches the rhythm used while planning.
