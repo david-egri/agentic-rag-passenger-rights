@@ -35,13 +35,13 @@ The living implementation plan — **what** we're building and **when**, plus cu
 ## Phase 2 — Corpus + RAG subgraph  `[x]`
 **Goal:** Grounded, cited retrieval that self-corrects — visible in the UI.
 - [x] Ingestion (`src/ingest.py`): generic **drop-in directory loader** → content-detected type → structure-aware chunkers (regulation Article/Recital · Commission-notice numbered sections · semantic HTML `<h1>`–`<h4>` headings · Markdown headings) + paragraph-overlap size guard → citation metadata → ChromaDB (idempotent rebuild). Embeddings reuse local Ollama (`src/store.py`).
-- [x] Freeze corpus — 4 docs: reg 261/2004 + **2024** interpretative guidelines + EUR-Lex legislative summary (`LEGISSUM:l24173`) + Your Europe plain-language summary — + `data/SOURCES.md` + `data/corpus/sources.json`. **Note:** `/data/` is gitignored for now (user decision) — corpus stays local, **not committed**; commit-vs-fetch decision deferred to Phase 6. See DECISIONS `gitignore-data-for-now`.
+- [x] Freeze corpus — 4 docs: reg 261/2004 + **2024** interpretative guidelines + EUR-Lex legislative summary (`LEGISSUM:l24173`) + Your Europe plain-language summary — + `data/SOURCES.md` + `data/corpus/sources.json`. **Note:** `/data/` is gitignored for now (user decision) — corpus stays local, **not committed**; commit-vs-fetch decision deferred to Phase 7. See DECISIONS `gitignore-data-for-now`.
 - [x] `retrieve_passenger_rights` as an explicit `@tool` (`src/tools.py`)
 - [x] Corrective-RAG subgraph (`src/rag.py`, compiled `StateGraph`): retrieve → grade → (rewrite → retrieve, bounded by `REWRITE_MAX_RETRIES`) → generate; LLM grader + cosine-distance safety floor; generate is grounded (no outside knowledge / invented figures)
 - [x] **UI — Corpus tab:** counts, per-document chunk browse with Article/Recital/Section labels, per-chunk metadata, filter; graceful "not ingested" state
 - [x] **UI — RAG tab:** query → corrective-RAG trace (retrieve hits → grade verdict → rewrite → generate) → grounded answer + citations + disclaimer; retrieved passages with distances. Reusable components in `ui_components.py`.
 **Done when:** dropping a file into `data/corpus/` + re-running ingestion indexes it with no code changes; Corpus + RAG tabs render and answers are grounded + cited. ✅ verified — drop-in test (new `.md` → indexed → retrievable, no code change), grader/grounding behaviour exercised, headless Streamlit boot HTTP 200.
-**Note:** 3B generation quality is the limiting factor on answer polish (architecture is sound); calibrate the grader floor + consider a larger model in Phase 5 eval. See DECISIONS `rag-grader`, `embeddings-ollama`, `corpus-2024-guidelines`, `python-314-resolved`.
+**Note:** 3B generation quality is the limiting factor on answer polish (architecture is sound); calibrate the grader floor + consider a larger model in Phase 6 eval. See DECISIONS `rag-grader`, `embeddings-ollama`, `corpus-2024-guidelines`, `python-314-resolved`.
 **Parked polish:** OJ-notice citation labels for unnumbered dash sub-headings render as `Section · — Strikes by airline staff` (em-dash leaks in; no section number). Tidy later — ideally have dash sub-headings inherit their parent numbered section (`Section 4.3.3 · Strikes by airline staff`); affects `chunk_notice` + a re-ingest (local `data/chroma/` only).
 
 ## Phase 3 — Calculator (the non-retrieval tool)  `[x]`
@@ -60,16 +60,24 @@ The living implementation plan — **what** we're building and **when**, plus cu
 - [x] `mixed`/`compensation_calc` as fan-out → fan-in (eligibility branch `rag → eligibility` ‖ calculator); `synthesize` is a **deferred** node so the uneven-length branches converge once; gate `final = eligible ? candidate : 0` applied at synthesize
 - [x] **UI gains — Agent tab (the product):** full node-by-node trace (`graph.stream`) + final grounded answer + citations + "not legal advice" disclaimer. Reuses chunk/citation/trace components (`render_agent_trace` added to `ui_components.py`, drills into the RAG subgraph trace).
 **Done when:** all four routes work end-to-end and the Agent tab visibly walks the nodes. ✅ verified — four routes classify/route correctly (out_of_scope→fallback; rights_info→rag; comp/mixed→fan-out), eligibility verdicts correct (own-staff strike = compensable, weather = extraordinary→€0), amounts correct (BUD→LHR 4h €250, PAR→ROM strike €250, MAD→JFK snowstorm €0, FRA→CAI 1h €0 sub-threshold), calc tests 17/17, headless Streamlit boot HTTP 200.
-**Note:** 3B answer-prose quality remains the limiting factor (the RAG `generate` text is sometimes garbled) — architecture/decisions are correct; calibrate in Phase 5 eval. See DECISIONS `agent-assembly`, `synthesize-deterministic`, `eligibility-control-frame`, `metro-aliases`.
+**Note:** 3B answer-prose quality remains the limiting factor (the RAG `generate` text is sometimes garbled) — architecture/decisions are correct; calibrate in Phase 6 eval (revisit candidate for the Phase 5 review). See DECISIONS `agent-assembly`, `synthesize-deterministic`, `eligibility-control-frame`, `metro-aliases`.
 
-## Phase 5 — Functional eval + load test  `[ ]`
+## Phase 5 — Review, spot-check & improve  `[ ]`
+**Goal:** Step back from "it runs" to "it's right and clean," **before** heavy eval and dockerization lock the design in. This phase is **human-driven**: the user reviews the assembled solution (Phases 1–4), spot-checks it, and **initiates** the improvements and changes they want — Claude's role is to assist and execute, not to autonomously drive a feature list. Open-ended and exploratory by design; the items below are *available activities*, not a fixed scope.
+- [ ] **Review & spot-check** (user-led) — exercise the four routes + the corrective-RAG subgraph (hand-picked queries + edge cases: band boundaries, EU-route asymmetry, own-staff-strike vs. weather, sub-threshold delays), sanity-checking against the non-negotiables and the five guardrails (citations, out-of-scope → fallback, disclaimer, deterministic/LLM-free calculator + synthesize, bounded rewrite loop, in-force figures).
+- [ ] **Available reference — parked items** to draw on if/when the user wants to address them: 3B answer-prose quality (RAG `generate` garbling), the OJ-notice citation-label em-dash leak (Phase 2 parked polish), the `RULES-LOCATION-REVISIT` flag.
+- [ ] **Implement the user-initiated changes** — Claude executes each on request; log non-trivial trade-offs/decisions in `DECISIONS.md` and re-spot-check the affected routes.
+- [ ] **Regression check** before moving on — confirm the verified Phase 4 behaviours (route classification, eligibility verdicts, amounts, calc tests 17/17, headless boot) still hold; list any remaining known-but-deferred items and carry them into Phase 6/7 or DECISIONS.
+**Done when:** the user is satisfied with the review pass, the changes they initiated are implemented and re-spot-checked with no Phase 4 regression, and the deferred items are explicitly listed for the later phases.
+
+## Phase 6 — Functional eval + load test  `[ ]`
 **Goal:** Measure correctness and latency (both are graded deliverables; the eval is itself a functional test).
 - [ ] `eval/eval_set.yaml` (15 Qs + ground truth) + an eval runner; methodology write-up
 - [ ] Load test (50–200 queries); attribute the bottleneck via **per-node timing** in the trace (LLM nodes vs. the rest). If that's not conclusive, consider adding a stub backend for a clean LLM-isolated A/B (deferred — see DECISIONS)
 - [ ] Latency metrics + bottleneck + 1–2 optimizations
 **Done when:** eval and load test run via documented commands and results are recorded.
 
-## Phase 6 — Docker + README  `[ ]`
+## Phase 7 — Docker + README  `[ ]`
 **Goal:** Reproducible entry point.
 - [ ] Dockerfile + docker-compose.yml (app + ollama)
 - [ ] README: problem, architecture + design justification, eval/perf summary, install/run, reform caveat
@@ -81,6 +89,7 @@ The living implementation plan — **what** we're building and **when**, plus cu
 ## Changes & findings log
 Append plan-affecting changes here (with a link to the DECISIONS.md entry that explains *why*). Keeps the phase sections clean while preserving the trail.
 
+- 2026-06-03 — Inserted **Phase 5 — Review, spot-check & harden** between agentic assembly and eval: review/spot-check the assembled solution, propose improvements, implement the selected ones before heavy eval + dockerization. Renumbered the two not-yet-started phases: eval **5 → 6**, Docker **6 → 7** (no branches/tags existed yet). Forward-references updated in PLAN + the canonical phase-branch list in CLAUDE.md. **Note:** "Phase 5 eval/load test" in DECISIONS entries dated 2026-06-03 *predate* this insert and now mean **Phase 6**. See DECISIONS `phase-5-review-insert`.
 - 2026-06-03 — Reordered build: UI-as-spine, LLM-first, corpus/RAG → calculator → agentic assembly; dropped Make; functional-testing with a calculator exception. See DECISIONS `build-approach-ui-spine`.
 - 2026-06-03 — Phase 1 built: Python pin 3.12 → **3.14** (only 3.14 available locally; Phase 1 stack has cp314 wheels — risk to re-check at Phase 2 ML deps), model default `qwen2.5:3b-instruct`. See DECISIONS `python-314`, `model-tag`.
 - 2026-06-03 — Phase 3 built. Deterministic calculator: pure logic in **`src/calculator.py`** (haversine + OpenFlights lookup + Art. 7 band table as module constants), thin `@tool` wrapper in `src/tools.py`; **`tests/test_calculator.py`** is the one classic-test exception (17 pass). Band figures kept as statutory constants (not YAML/env — see DECISIONS `calculator-rules-constants`); 50% reduction is flag-driven, long-haul 3–4h auto-50% nuance noted not encoded (DECISIONS `calculator-rules-constants`). OpenFlights `airports.dat` (ODbL) added to gitignored `data/`. Only new dep: `pytest==9.0.3`.
