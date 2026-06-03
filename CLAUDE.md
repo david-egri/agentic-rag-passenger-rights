@@ -75,6 +75,20 @@ Backend switch: `LLM_BACKEND=ollama` (default) or `LLM_BACKEND=dummy`. Configure
 
 ---
 
+## Implementation guardrails (from design review — lock these in)
+
+These five make the difference between *claiming* a requirement and *demonstrably* satisfying it. Implement them this way unless there's a concrete reason not to (record any deviation in `DECISIONS.md`):
+
+1. **Mixed-query path is a real fan-out → fan-in.** Decompose `mixed` into a RAG/eligibility branch and a calculator branch that run as **independent parallel branches** and converge at `synthesize`. This is the single highest-value refinement — it *demonstrates* "decomposition into subtasks AND independent execution" instead of asserting it. Don't collapse it into a sequential path.
+2. **Both capabilities are explicit LangChain `@tool`s.** `retrieve_passenger_rights` and `calculate_compensation` are decorated tools, not plain functions buried in nodes — so there's no argument about whether they count. The calculator stays deterministic/LLM-free; wrapping it as a `@tool` does **not** introduce a model call.
+3. **The RAG subsystem is a compiled `StateGraph` added via `add_node`.** It must be an actually-compiled subgraph invoked as a node — not a Python function the main graph calls. That wiring is what makes it "a subgraph that doesn't count toward the 5."
+4. **Ingestion is a generic, drop-in directory loader.** Dropping a new file into `data/corpus/` → detect type → apply the right chunker → re-run `make ingest` → indexed, with **no code changes**. This is what satisfies "scalable data integration"; avoid per-document hand-tuned parsing paths.
+5. **Router is an explicit node; the planner does real decomposition.** The router is a genuine node that writes its routing decision into state (cleaner trace panel), with the conditional branch as the edge *after* it — not a bare conditional edge. The planner emits subtasks via the LLM, not a hardcoded "mixed always splits into eligibility + calc."
+
+Framing to be ready to defend: this is a **directed/structured agent** (the graph governs control flow) rather than an open-ended planner that freely chooses tools — a deliberate trade-off of predictability and testability over open-ended autonomy, appropriate for an evaluable prototype. The corrective-RAG grade→rewrite loop is the most defensibly "agentic" part. See `DECISIONS.md`.
+
+---
+
 ## Conventions
 
 - **Chunk by legal structure** (Article / Recital), not fixed token windows; sub-split only oversized articles by paragraph with small overlap. Attach metadata (`source`, `article`, `title`, `url`, `retrieved_at`, `chunk_id`) to every chunk.

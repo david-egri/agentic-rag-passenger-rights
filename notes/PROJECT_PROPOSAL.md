@@ -75,8 +75,10 @@ All sources are free and redistributable; commit a frozen snapshot into the repo
 **Principle: chunk by legal structure, not by fixed token windows.** Being able to explain this choice in the interview is itself a signal of judgment.
 
 ### 3.1 Pipeline (`src/ingest/`)
+Write ingestion as a **generic, drop-in directory loader**, not a per-document hand-tuned script: dropping a new file into `data/corpus/` → detect its type → apply the matching chunker → re-run `make ingest` → it's indexed, **with no code changes**. That "adding a new regulation/guideline is a drop-in operation" is exactly what the *scalable data integration* criterion rewards.
+
 1. **Acquire & freeze** — download the 3 docs to `data/corpus/`, prefer the EUR-Lex HTML (cleanly structured) over PDF.
-2. **Parse structure** — for the regulation, split on **Article** and **Recital** boundaries; for the guidelines, split on their section/heading boundaries. Each resulting unit is one logical chunk.
+2. **Parse structure** — dispatch on document type to the right structure-aware chunker: regulation → split on **Article** and **Recital** boundaries; guidelines → split on their section/heading boundaries. Each resulting unit is one logical chunk. New document types add a chunker behind the same dispatch, not a new pipeline.
 3. **Size guard** — if a single article exceeds ~1000 tokens, sub-split on paragraph numbering (Art. 7(1), 7(2)...) with a small overlap (~50 tokens) so cross-paragraph references survive.
 4. **Attach metadata to every chunk** (critical for clean citations and for the grader node):
    ```json
@@ -105,11 +107,11 @@ All sources are free and redistributable; commit a frozen snapshot into the repo
 | Task requirement | How this design satisfies it |
 |------------------|------------------------------|
 | ≥ 5 nodes | Main graph has **7 nodes** (see 4.3) |
-| Autonomous decision-making / conditional routing | **Router** node + post-eligibility conditional edge |
-| Decomposition into subtasks | **Planner** node splits mixed queries into `{eligibility, calculation}` subtasks |
+| Autonomous decision-making / conditional routing | **Router** node (writes the routing decision to state) + conditional edge after it; post-eligibility conditional edge; grade→rewrite decision inside the RAG subgraph |
+| Decomposition into subtasks **and independent execution** | **Planner** node emits subtasks via the LLM; `mixed` runs as a **fan-out → fan-in** of a RAG/eligibility branch and a calculator branch that converge at synthesize |
 | State management for intermediate results | Typed `AgentState` carried across all nodes (see 4.2) |
-| ≥ 2 tools, ≥ 1 non-retrieval | `retrieve_passenger_rights` (retrieval) + `calculate_compensation` (non-retrieval math) |
-| Dedicated modular RAG subgraph, not counted in the 5 | Separate compiled **RAG subgraph** invoked as a single node |
+| ≥ 2 tools, ≥ 1 non-retrieval | `retrieve_passenger_rights` (retrieval) + `calculate_compensation` (non-retrieval math), both as explicit LangChain `@tool`s |
+| Dedicated modular RAG subgraph, not counted in the 5 | Separate **compiled `StateGraph`** added to the main graph via `add_node` (invoked as a single node) |
 
 ### 4.2 State schema (`src/state.py`)
 ```python
@@ -161,8 +163,10 @@ class AgentState(TypedDict, total=False):
 ```
 
 1. **Intake / Query Understanding** — extract `flight_details` entities (origin, destination, delay hours, disruption type, stated reason) and classify intent into one of the four `query_type`s. One LLM call with a structured-output prompt (return JSON).
-2. **Router** (LangGraph conditional edge) — dispatches on `query_type`: `rights_info` → RAG only; `compensation_calc` → calculator path; `mixed` → planner; `out_of_scope` → fallback.
-3. **Planner / Decomposer** — for `mixed`, write `subtasks = ["determine eligibility via rules", "compute compensation amount"]` and orchestrate both the RAG subgraph and the calculator.
+2. **Router** — a genuine node that writes its routing decision into `state` (so it shows up in the trace panel); a conditional edge *after* it dispatches on `query_type`: `rights_info` → RAG only; `compensation_calc` → calculator path; `mixed` → planner; `out_of_scope` → fallback. (Node + following edge, **not** a bare conditional edge — pick one model and keep it consistent.)
+3. **Planner / Decomposer** — for `mixed`, the **LLM emits** the subtasks (not a hardcoded split), then the graph **fans out** to a RAG/eligibility branch and a calculator branch that run independently and **fan in** at synthesize. This is what demonstrates "decomposition into subtasks **and independent execution**."
+
+   These branches are genuinely independent because they consume **different inputs**: eligibility needs the disruption *reason* + the rules (RAG); the calculator needs only route + delay. Neither consumes the other's output — so the calculator is **eligibility-agnostic** and computes the **statutory candidate amount** (what Art. 7 awards for that distance band + delay). The dependency between "is it owed?" and "how much?" is a **combination dependency at fan-in**, not an input dependency between branches: `final_amount = eligible ? candidate_amount : 0`, applied at synthesize. Computing a candidate amount that may be zeroed is free (the calculator is deterministic, no LLM) and useful — synthesize can give a counterfactual ("you'd ordinarily be owed €400, but the cause was weather → no compensation due, though care/rerouting still apply").
 4. **Eligibility** — autonomous decision node: combines retrieved rules + extracted reason to decide whether the disruption is compensable (e.g., own-airline staff strike = **not** extraordinary → eligible; weather = extraordinary → not eligible). Sets `eligibility` and conditionally suppresses compensation.
 5. **Compensation Calculator** — calls the `calculate_compensation` tool (non-retrieval).
 6. **Synthesize / Compose** — merges everything into a grounded, plain-language final answer **with citations** and a one-line "this is general information, not legal advice" disclaimer.
@@ -180,11 +184,13 @@ retrieve ──► grade_documents ──► (relevant?) ──► generate (gro
 - **rewrite_query** — if not, reformulate and retry once or twice (bounded loop to avoid runaway latency).
 - **generate** — answer strictly from retrieved chunks; if support is insufficient, say so rather than inventing. Emits `rag_citations`.
 
-Compile this subgraph separately and invoke it as a single callable node from the main graph — this is exactly the "callable from the main workflow but does not count toward the nodes" requirement.
+Build this as an actually-compiled `StateGraph` and attach it to the main graph via `add_node` so it's literally a subgraph invoked as a node — **not** a Python function the main graph calls. That wiring is exactly the "callable from the main workflow but does not count toward the nodes" requirement.
 
 ---
 
 ## 5. Tools
+
+Both capabilities are exposed as explicit LangChain `@tool`s (not plain functions buried in nodes), so there's no ambiguity about whether they count. Wrapping the calculator as a `@tool` does **not** introduce an LLM call — it stays deterministic.
 
 ### 5.1 Tool 1 — `retrieve_passenger_rights(query: str) -> list[dict]` (retrieval)
 - Embeds the query with the local embedding model and runs top-k similarity search over ChromaDB.
@@ -357,11 +363,11 @@ eu261-agentic-rag/
 
 - [ ] **Problem relevance & justification** documented (§1 in README).
 - [ ] **≥ 5 nodes** in the main graph (have 7) with **conditional routing** (router + eligibility).
-- [ ] **Decomposition** into subtasks (planner) demonstrated on a mixed query.
+- [ ] **Decomposition + independent execution** — planner emits subtasks (LLM, not hardcoded); `mixed` runs as a fan-out → fan-in of parallel branches.
 - [ ] **State management** via typed `AgentState`.
-- [ ] **≥ 2 tools**, with **≥ 1 non-retrieval** (calculator).
-- [ ] **Modular RAG subgraph**, callable, **not** counted among the 5.
-- [ ] **Quality corpus processing** (structure-aware chunking + metadata + citations).
+- [ ] **≥ 2 tools**, with **≥ 1 non-retrieval** (calculator); both as explicit `@tool`s.
+- [ ] **Modular RAG subgraph** — compiled `StateGraph` added via `add_node`, **not** counted among the 5.
+- [ ] **Quality + scalable corpus processing** (structure-aware chunking + metadata + citations; generic drop-in ingestion loader).
 - [ ] **No paid API**; local LLM justified, **dummy mode** available.
 - [ ] **Streamlit UI** shows agent steps + RAG result + citations + disclaimer.
 - [ ] **Dockerfile** present; **docker-compose.yml** bonus.
