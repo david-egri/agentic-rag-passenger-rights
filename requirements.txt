@@ -1,8 +1,11 @@
 # Pinned dependencies. Reproducibility is a non-negotiable (see CLAUDE.md).
-# Phase 1 set: LLM backend + Streamlit chat spine. Corpus/RAG deps
-# (chromadb, sentence-transformers, langgraph) arrive in later phases.
+# Phase 1: LLM backend + Streamlit chat spine.
+# Phase 2: corpus + corrective-RAG subgraph (langgraph + chromadb).
+# Embeddings reuse the local Ollama (nomic-embed-text) via langchain-ollama —
+# no torch / sentence-transformers needed (see DECISIONS embeddings-ollama).
 
 streamlit==1.58.0          # UI spine (one tab per phase)
-langchain-ollama==1.1.0    # ChatOllama backend behind the get_llm() seam
+langchain-ollama==1.1.0    # ChatOllama + OllamaEmbeddings behind the get_llm() seam
 langchain-core==1.4.0      # message types / shared LangChain primitives
-PyYAML==6.0.3              # config.yaml loading
+langgraph==1.2.4           # compiled StateGraph for the corrective-RAG subgraph
+chromadb==1.5.9            # persisted vector store at data/chroma/
