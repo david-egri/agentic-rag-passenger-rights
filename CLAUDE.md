@@ -52,19 +52,19 @@ This is an **interview prototype**. Optimize for a small, clean, reproducible, w
 
 ## Commands
 
-Use the Makefile targets (create them if missing):
+No Make — run plain, documented commands (keep them in sync in `PLAN.md`/README):
 
 ```bash
-make install      # install pinned deps
-make ingest       # parse + chunk + embed corpus -> ChromaDB (idempotent)
-make run          # launch the Streamlit UI
-make eval         # run functional eval over eval/eval_set.yaml
-make loadtest     # run the 50-200 query load test (supports LLM_BACKEND=dummy)
-make test         # unit tests (calculator first)
-docker compose up # app + ollama end-to-end
+pip install -r requirements.txt          # install pinned deps
+python -m src.ingest                      # parse + chunk + embed corpus -> ChromaDB (idempotent)
+streamlit run app/streamlit_app.py        # launch the Streamlit UI
+python -m eval.functional_eval            # run functional eval over eval/eval_set.yaml
+python -m eval.loadtest                   # run the 50-200 query load test (supports LLM_BACKEND=dummy)
+pytest tests/test_calculator.py           # the one classic-test exception (deterministic calculator)
+docker compose up                         # app + ollama end-to-end
 ```
 
-Backend switch: `LLM_BACKEND=ollama` (default) or `LLM_BACKEND=dummy`. Configure model names, Ollama URL, and top-k in `config.yaml` / env — never hardcode.
+(Module paths are indicative — match them to the actual layout as it lands.) Backend switch: `LLM_BACKEND=ollama` (default) or `LLM_BACKEND=dummy`. Configure model names, Ollama URL, and top-k in `config.yaml` / env — never hardcode.
 
 ---
 
@@ -97,7 +97,7 @@ These five make the difference between *claiming* a requirement and *demonstrabl
 1. **Mixed-query path is a real fan-out → fan-in.** Decompose `mixed` into a RAG/eligibility branch and a calculator branch that run as **independent parallel branches** and converge at `synthesize`. This is the single highest-value refinement — it *demonstrates* "decomposition into subtasks AND independent execution" instead of asserting it. Don't collapse it into a sequential path.
 2. **Both capabilities are explicit LangChain `@tool`s.** `retrieve_passenger_rights` and `calculate_compensation` are decorated tools, not plain functions buried in nodes — so there's no argument about whether they count. The calculator stays deterministic/LLM-free; wrapping it as a `@tool` does **not** introduce a model call.
 3. **The RAG subsystem is a compiled `StateGraph` added via `add_node`.** It must be an actually-compiled subgraph invoked as a node — not a Python function the main graph calls. That wiring is what makes it "a subgraph that doesn't count toward the 5."
-4. **Ingestion is a generic, drop-in directory loader.** Dropping a new file into `data/corpus/` → detect type → apply the right chunker → re-run `make ingest` → indexed, with **no code changes**. This is what satisfies "scalable data integration"; avoid per-document hand-tuned parsing paths.
+4. **Ingestion is a generic, drop-in directory loader.** Dropping a new file into `data/corpus/` → detect type → apply the right chunker → re-run ingestion → indexed, with **no code changes**. This is what satisfies "scalable data integration"; avoid per-document hand-tuned parsing paths.
 5. **Router is an explicit node; the planner does real decomposition.** The router is a genuine node that writes its routing decision into state (cleaner trace panel), with the conditional branch as the edge *after* it — not a bare conditional edge. The planner emits subtasks via the LLM, not a hardcoded "mixed always splits into eligibility + calc."
 
 Framing to be ready to defend: this is a **directed/structured agent** (the graph governs control flow) rather than an open-ended planner that freely chooses tools — a deliberate trade-off of predictability and testability over open-ended autonomy, appropriate for an evaluable prototype. The corrective-RAG grade→rewrite loop is the most defensibly "agentic" part. See `DECISIONS.md`.
@@ -118,7 +118,7 @@ Framing to be ready to defend: this is a **directed/structured agent** (the grap
 
 ## Build order
 
-The phased build plan and its live status live in **`PLAN.md`** (see the Document map above). The short version: calculator + tests first (it's the eval ground truth), then ingestion, then the RAG subgraph, then the main graph, UI, eval, load test, Docker, README last. Update `PLAN.md` as phases complete; log the *why* behind any plan change in `DECISIONS.md`.
+The phased build plan and its live status live in **`PLAN.md`** (see the Document map above). The short version (Streamlit-as-spine): LLM backend + minimal chat UI → corpus + RAG subgraph → calculator → agentic assembly → eval + load test → Docker + README. The UI grows a new visualization each phase. Update `PLAN.md` as phases complete; log the *why* behind any plan change in `DECISIONS.md`.
 
 ---
 

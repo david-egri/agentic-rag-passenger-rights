@@ -75,7 +75,7 @@ All sources are free and redistributable; commit a frozen snapshot into the repo
 **Principle: chunk by legal structure, not by fixed token windows.** Being able to explain this choice in the interview is itself a signal of judgment.
 
 ### 3.1 Pipeline (`src/ingest/`)
-Write ingestion as a **generic, drop-in directory loader**, not a per-document hand-tuned script: dropping a new file into `data/corpus/` → detect its type → apply the matching chunker → re-run `make ingest` → it's indexed, **with no code changes**. That "adding a new regulation/guideline is a drop-in operation" is exactly what the *scalable data integration* criterion rewards.
+Write ingestion as a **generic, drop-in directory loader**, not a per-document hand-tuned script: dropping a new file into `data/corpus/` → detect its type → apply the matching chunker → re-run ingestion → it's indexed, **with no code changes**. That "adding a new regulation/guideline is a drop-in operation" is exactly what the *scalable data integration* criterion rewards.
 
 1. **Acquire & freeze** — download the 3 docs to `data/corpus/`, prefer the EUR-Lex HTML (cleanly structured) over PDF.
 2. **Parse structure** — dispatch on document type to the right structure-aware chunker: regulation → split on **Article** and **Recital** boundaries; guidelines → split on their section/heading boundaries. Each resulting unit is one logical chunk. New document types add a chunker behind the same dispatch, not a new pipeline.
@@ -91,7 +91,7 @@ Write ingestion as a **generic, drop-in directory loader**, not a per-document h
      "chunk_id": "reg261_art7_p1"
    }
    ```
-5. **Embed** with a local model (see 5.1) and persist to **ChromaDB** at `data/chroma/`. Make ingestion idempotent (re-running rebuilds cleanly) and commit a small script `make ingest`.
+5. **Embed** with a local model (see 5.1) and persist to **ChromaDB** at `data/chroma/`. Make ingestion idempotent (re-running rebuilds cleanly) and expose it as a documented command (e.g. `python -m src.ingest`).
 
 ### 3.2 Retrieval config
 - Top-k = 4–6 to start; expose as config.
@@ -315,7 +315,7 @@ Each item lists the **path it exercises** and the **expected answer / ground tru
 1. **Hallucination firewall.** The `generate` node must answer only from retrieved chunks and the fallback node must fire for out-of-scope queries. Grade this in the eval (items 14–15).
 2. **Citations, always.** Every rights answer cites source + article. This is the cheapest way to demonstrate "quality processing" and trustworthiness.
 3. **"Not legal advice" disclaimer** in every answer that interprets the rules.
-4. **Reproducibility hygiene** (a named grading criterion): pin dependency versions, set `temperature=0` and a fixed seed where supported, commit the frozen corpus snapshot + `SOURCES.md`, make ingestion idempotent, and document `make ingest && make run`.
+4. **Reproducibility hygiene** (a named grading criterion): pin dependency versions, set `temperature=0` and a fixed seed where supported, commit the frozen corpus snapshot + `SOURCES.md`, make ingestion idempotent, and document the plain run commands (ingest, then `streamlit run`).
 5. **Observability for the UI requirement.** The `trace` in state isn't optional polish — it's what makes the "show the agent's steps" requirement real.
 6. **Config over hardcoding.** `LLM_BACKEND`, model names, top-k, Ollama URL via env/`config.yaml`. Enables the dummy-mode load test and clean Docker wiring.
 7. **Unit tests for the calculator.** Deterministic and trivial to test — easy, high-credibility coverage (distance bands, threshold, reduction rule).
@@ -337,7 +337,6 @@ eu261-agentic-rag/
 │   └── TASK_DESCRIPTION.md        # original task brief
 ├── Dockerfile
 ├── docker-compose.yml             # bonus: app + ollama services
-├── Makefile                       # ingest, run, eval, loadtest, test
 ├── requirements.txt / pyproject.toml
 ├── config.yaml
 ├── data/
@@ -369,18 +368,9 @@ eu261-agentic-rag/
 
 ---
 
-## 12. Build Roadmap (suggested order for Claude Code)
+## 12. Build Roadmap
 
-1. **Scaffold** repo, config, `llm.py` with dummy backend, Makefile.
-2. **Calculator first** (`tools/compensation.py`) + unit tests — it's deterministic and unblocks the eval harness early.
-3. **Ingestion** (`src/ingest/`) → ChromaDB; verify retrieval quality manually on 2–3 queries.
-4. **RAG subgraph** (corrective RAG) standalone; test it answers grounded with citations.
-5. **Main graph** nodes + router + state; wire the RAG subgraph and calculator in.
-6. **Streamlit UI** with the trace/steps panel.
-7. **Eval harness** (`functional_eval.py`) over the 15 questions; iterate on prompts.
-8. **Load test** (real + dummy backends); write up latency, bottleneck, optimizations.
-9. **Dockerfile + docker-compose** (app + ollama); verify `docker compose up` runs end-to-end.
-10. **README** last, pulling results from steps 7–8.
+The live, phased build plan and its status are maintained in **`PLAN.md`** (the proposal stays focused on design rationale; the plan is the living doc). Current approach is Streamlit-as-spine: LLM backend + minimal chat UI → corpus + RAG subgraph → calculator → agentic assembly → functional eval + load test → Docker + README, with the UI gaining a visualization each phase.
 
 ---
 

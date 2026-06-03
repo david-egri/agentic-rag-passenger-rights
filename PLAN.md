@@ -4,6 +4,11 @@ The living implementation plan — **what** we're building and **when**, plus cu
 
 **Workflow:** one branch per phase. Each phase's PR ticks that phase's boxes here and refines the *next* phase with whatever was learned. Keep upcoming phases editable — they are expected to change.
 
+**Build philosophy (see DECISIONS):**
+- **Streamlit is the spine.** The UI exists from Phase 1 and gains a new visualization each phase, so every stage is runnable and demonstrable. The UI doubles as the functional-test harness.
+- **Functional over unit tests.** Verify real functionality by exercising it (through the UI and the 15-Q eval) rather than classical unit tests. **One exception:** the deterministic calculator keeps a small direct test set.
+- **No Make.** Run things with plain, documented commands (kept in this file + README). Reproducibility still holds: pinned versions, `temperature=0`, idempotent ingest, frozen corpus.
+
 **Status legend:** `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
@@ -11,78 +16,59 @@ The living implementation plan — **what** we're building and **when**, plus cu
 ## Phase 0 — Project docs & design  `[x]`
 **Goal:** Lock the design and the working agreement before writing code.
 - [x] PROJECT_PROPOSAL.md (design rationale)
-- [x] CLAUDE.md (working agreement, guardrails, non-negotiables)
+- [x] CLAUDE.md (working agreement, guardrails, non-negotiables, document map)
 - [x] DECISIONS.md (decision log) + this PLAN.md
 - [x] Graph diagram reflects router-as-node + independent fan-out branches
 
-## Phase 1 — Scaffold + LLM backend + Makefile  `[ ]`
-**Goal:** Runnable skeleton with the dummy backend so everything downstream is testable offline.
-- [ ] Repo scaffold per PROJECT_PROPOSAL §11 (src/, app/, eval/, data/)
-- [ ] `config.yaml` + env loading (no hardcoded knobs)
-- [ ] `src/llm.py` with `LLM_BACKEND=ollama|dummy` switch
-- [ ] Makefile targets: install, ingest, run, eval, loadtest, test
-**Done when:** `make install` works and the dummy backend returns canned responses.
+## Phase 1 — LLM backend + minimal chat UI  `[ ]`
+**Goal:** A runnable spine on day one — talk to the model directly.
+- [ ] `src/llm.py` with `LLM_BACKEND=ollama|dummy` switch; `temperature=0`
+- [ ] `config.yaml` + env loading (model names, Ollama URL, top-k — no hardcoding)
+- [ ] Minimal Streamlit **chat** app (`app/streamlit_app.py`) wired to the LLM
+- [ ] Pinned `requirements.txt`; run command documented (`streamlit run app/streamlit_app.py`)
+**Done when:** you can chat with both backends from the UI; dummy works fully offline.
 
-## Phase 2 — Calculator + unit tests  `[ ]`
-**Goal:** Deterministic, LLM-free compensation tool — the eval ground truth. Build first.
+## Phase 2 — Corpus + RAG subgraph  `[ ]`
+**Goal:** Grounded, cited retrieval that self-corrects — visible in the UI.
+- [ ] Ingestion: generic **drop-in directory loader** → structure-aware chunkers → metadata → ChromaDB (idempotent)
+- [ ] Commit frozen corpus + `data/SOURCES.md`
+- [ ] `retrieve_passenger_rights` as an explicit `@tool` (the retrieval tool lives here, with RAG)
+- [ ] Corrective-RAG subgraph (compiled `StateGraph`): retrieve → grade → (rewrite → retrieve, bounded) → generate
+- [ ] **UI gains:** grounded-chat-with-citations mode + a retrieval/grade trace view
+**Done when:** dropping a file into `data/corpus/` + re-running ingestion indexes it with no code changes; UI answers grounded + cited.
+
+## Phase 3 — Calculator (the non-retrieval tool)  `[ ]`
+**Goal:** Deterministic compensation tool — the factual backbone and eval ground truth.
 - [ ] `calculate_compensation` as an explicit `@tool` (haversine → band → amount → 3h threshold + 50% rule)
-- [ ] Eligibility-agnostic: returns the **candidate** amount (gate lives in synthesize) — see DECISIONS
-- [ ] Unit tests: distance bands, threshold, reduction, boundary routes (~1500 km)
-**Done when:** `make test` passes with recomputed-from-real-coords expectations.
+- [ ] **Eligibility-agnostic:** returns the candidate amount; gate lives in synthesize (see DECISIONS)
+- [ ] Small direct test set (the one classic-test exception): band boundaries (~1500 km), threshold, reduction
+- [ ] **UI gains:** a calculator panel (inputs → distance / band / amount) for functional verification
+**Done when:** the test set passes with recomputed-from-real-coords expectations; panel works.
 
-## Phase 3 — Ingestion → ChromaDB  `[ ]`
-**Goal:** Structure-aware, **drop-in** corpus loader (scalable integration).
-- [ ] Generic directory loader: detect type → dispatch to matching structure-aware chunker
-- [ ] Per-chunk metadata (source, article, title, url, retrieved_at, chunk_id)
-- [ ] Idempotent persist to `data/chroma/`; commit frozen corpus + `data/SOURCES.md`
-- [ ] Sanity-check retrieval on 2–3 queries
-**Done when:** dropping a new file into `data/corpus/` + `make ingest` indexes it with no code changes.
-
-## Phase 4 — RAG subgraph (corrective RAG), standalone  `[ ]`
-**Goal:** Modular, grounded, cited retrieval that self-corrects.
-- [ ] Compiled `StateGraph`: retrieve → grade → (rewrite → retrieve, bounded) → generate
-- [ ] `retrieve_passenger_rights` as an explicit `@tool`
-- [ ] Citations from metadata; refuses when support is insufficient
-**Done when:** subgraph answers grounded + cited in isolation.
-
-## Phase 5 — Main graph + router + state  `[ ]`
-**Goal:** Wire the full agent.
+## Phase 4 — Agentic assembly (end goal)  `[ ]`
+**Goal:** Put it together into the agentic-RAG graph.
 - [ ] Typed `AgentState`; nodes: intake, router (writes decision to state), planner, eligibility, calculator, synthesize, fallback
 - [ ] RAG subgraph attached via `add_node`
 - [ ] `mixed`/`compensation_calc` as fan-out → fan-in; gate applied at synthesize
-**Done when:** all four routes produce correct end-to-end behavior.
+- [ ] **UI gains:** full node-by-node trace panel (`graph.stream`) — the culmination of the incremental UI
+**Done when:** all four routes work end-to-end and the trace panel visibly walks the nodes.
 
-## Phase 6 — Streamlit UI with trace panel  `[ ]`
-**Goal:** Demonstrate agent operation.
-- [ ] `graph.stream` → append each node's output to the trace panel
-- [ ] Show query_type, decomposition, retrieved chunks, eligibility rationale, calc result, citations, disclaimer
-**Done when:** a mixed query visibly walks through the nodes in the UI.
+## Phase 5 — Functional eval + load test  `[ ]`
+**Goal:** Measure correctness and latency (both are graded deliverables; the eval is itself a functional test).
+- [ ] `eval/eval_set.yaml` (15 Qs + ground truth) + an eval runner; methodology write-up
+- [ ] Load test (50–200 queries) supporting `LLM_BACKEND=dummy` to isolate LLM time
+- [ ] Latency metrics + bottleneck + 1–2 optimizations
+**Done when:** eval and load test run via documented commands and results are recorded.
 
-## Phase 7 — Functional eval (15 Qs)  `[ ]`
-**Goal:** Measure correctness; iterate prompts.
-- [ ] `eval/eval_set.yaml` (15 Qs + ground truth) — calculator outputs as ground truth
-- [ ] `functional_eval.py` + methodology write-up
-**Done when:** eval runs via `make eval` and results are recorded.
-
-## Phase 8 — Load test (50–200 queries)  `[ ]`
-**Goal:** Latency + bottleneck analysis.
-- [ ] Load test supporting `LLM_BACKEND=dummy` to isolate LLM time
-- [ ] Report latency metrics + bottleneck + 1–2 optimizations
-**Done when:** `make loadtest` produces the numbers and the write-up.
-
-## Phase 9 — Docker + compose  `[ ]`
-- [ ] Dockerfile
-- [ ] docker-compose.yml (app + ollama) — bonus
-**Done when:** `docker compose up` runs end-to-end.
-
-## Phase 10 — README  `[ ]`
-**Goal:** Complete, reproducible entry point. Write last.
-- [ ] Problem, architecture + design justification, eval/perf summary, install/run, reform caveat
-**Done when:** a fresh clone can be set up and run from the README alone.
+## Phase 6 — Docker + README  `[ ]`
+**Goal:** Reproducible entry point.
+- [ ] Dockerfile + docker-compose.yml (app + ollama)
+- [ ] README: problem, architecture + design justification, eval/perf summary, install/run, reform caveat
+**Done when:** `docker compose up` runs end-to-end and a fresh clone can be set up from the README alone.
 
 ---
 
 ## Changes & findings log
 Append plan-affecting changes here (with a link to the DECISIONS.md entry that explains *why*). Keeps the phase sections clean while preserving the trail.
 
-- _none yet_
+- 2026-06-03 — Reordered build: UI-as-spine, LLM-first, corpus/RAG → calculator → agentic assembly; dropped Make; functional-testing with a calculator exception. See DECISIONS `build-approach-ui-spine`.

@@ -21,6 +21,16 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Build approach: Streamlit-as-spine, reordered, no Make, functional-first  (`build-approach-ui-spine`)
+**[decision]** Reworked the build order and process: (1) **Streamlit is the spine** — a minimal chat UI exists from Phase 1 and gains a visualization each phase; (2) **reordered** to LLM backend + chat → corpus + RAG → calculator → agentic assembly → eval + load test → Docker + README; (3) **dropped Make** in favor of plain documented commands; (4) **functional testing** (through the UI + the 15-Q eval) over classical unit tests.
+**Why:** The UI-as-spine keeps every stage runnable and demonstrable, and doubles as the functional-test harness — which is why functional testing through it is sufficient for most of the app. LLM-first de-risks the Ollama/dummy switch immediately and gives something runnable on day one. Make added ceremony without value for a prototype this size. Reordering breaks no acceptance criteria (those constrain the final artifact, not build order).
+**Exceptions / guards:**
+- The **calculator keeps a small direct test set** — it's deterministic, trivially testable, and produces the compensation amounts (and eval ground truth); a wrong euro figure is the worst failure mode, so verifying it only through a chat box is too weak.
+- The retrieval tool (`retrieve_passenger_rights`) is born in the **corpus/RAG** phase (the subgraph uses it); the dedicated tools phase is the **calculator**.
+- The required **functional eval (15 Qs), load test, Docker, and README** remain as explicit late phases — they're graded deliverables; the eval is itself a functional test.
+- **Reproducibility** is independent of Make and still holds: pinned versions, `temperature=0`, idempotent ingest, frozen corpus.
+**Revisit if:** the app grows enough that manual/functional verification stops catching regressions — then add targeted tests at the seams (RAG grading, router classification).
+
 ## 2026-06-03 — Calculator is eligibility-agnostic; gating happens at fan-in
 **[decision]** In the `mixed` path, the eligibility branch and the calculator branch are siblings that run independently and converge at `synthesize`; the calculator does **not** depend on eligibility.
 **Why:** This resolves the apparent contradiction "why compute an amount before eligibility is fixed?" The two branches consume *different* inputs — eligibility needs the disruption *reason* + rules (RAG); the calculator needs only route + delay. Neither consumes the other's output. The dependency is a **combination dependency at fan-in** (`final = eligible ? candidate_amount : 0`), not an input dependency between branches — which is exactly what fan-out → fan-in expresses. The calculator therefore computes the **statutory candidate amount** (what Art. 7 awards for that distance band + delay), and the gate is applied at merge. Computing an amount that may be zeroed is free (deterministic, no LLM) and useful: it lets synthesize give a counterfactual ("you'd ordinarily be owed €400, but the cause was weather → no compensation, though care/rerouting still apply").
