@@ -13,7 +13,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 import config
 from src.llm import get_llm
-from ui_components import render_chunk_card, render_citations, render_disclaimer, render_rag_trace
+from ui_components import (
+    render_agent_trace,
+    render_chunk_card,
+    render_citations,
+    render_disclaimer,
+    render_rag_trace,
+)
 
 # A light system prompt: this tab talks to the raw model (a dev/demo surface), not the
 # grounded agent. Grounding/citation guarantees live in the Agent tab (Phase 4).
@@ -274,10 +280,64 @@ def render_calculator_tab():
     render_disclaimer()
 
 
-def render_placeholder_tab(name, phase, blurb):
-    """Graceful 'not built yet' state for tabs that later phases will fill in."""
-    st.subheader(name)
-    st.info(f"**Coming in {phase}.** {blurb}")
+def render_agent_tab():
+    """Agent tab — the product. Runs the full 7-node agent graph and walks the nodes:
+    intake → router → (planner) → rag/eligibility ‖ calculator → synthesize, with the
+    grounded final answer, citations, and the 'not legal advice' disclaimer."""
+    st.subheader("Agent")
+    st.caption(
+        "The full agentic-RAG graph (`src/graph.py`): intake classifies the query, the router "
+        "dispatches, `mixed`/`compensation_calc` fan out to an eligibility branch (RAG → "
+        "eligibility) and the deterministic calculator, and synthesize gates and composes the "
+        "answer. Watch every node below."
+    )
+
+    _, total = _load_corpus_chunks()
+    if not total:
+        st.info("**Corpus not ingested yet.** Run `python -m src.ingest` first (the agent needs retrieval).")
+        return
+
+    examples = [
+        "What are my rights if my flight is cancelled?",
+        "My flight from Budapest to London was delayed 4 hours. How much compensation do I get?",
+        "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",
+        "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",
+        "How much does it cost to bring a dog on the flight?",
+    ]
+    example = st.selectbox("Example question (or type your own below)", ["—"] + examples)
+    default = "" if example == "—" else example
+    question = st.text_input("Your question", value=default, key="agent_q")
+
+    if not st.button("Run agent", type="primary") or not question.strip():
+        return
+
+    try:
+        from src.graph import agent_graph
+
+        final = None
+        with st.spinner("Running the agent graph (intake → router → … → synthesize)…"):
+            for state in agent_graph.stream({"user_query": question, "trace": []}, stream_mode="values"):
+                final = state
+    except Exception as exc:
+        st.error(
+            f"Could not run the agent: {exc}\n\nIs Ollama running (LLM + `{config.EMBEDDING_MODEL}` "
+            "embeddings)? Try `ollama serve`."
+        )
+        return
+
+    st.markdown("#### Agent trace")
+    render_agent_trace(final.get("trace", []))
+
+    st.markdown("#### Answer")
+    st.markdown(final.get("final_answer", "_(no answer)_"))
+    render_citations(final.get("rag_citations", []))
+    render_disclaimer()
+
+    docs = final.get("retrieved_docs", [])
+    if docs:
+        with st.expander(f"Retrieved passages ({len(docs)})", expanded=False):
+            for d in docs:
+                render_chunk_card(d, show_distance=True)
 
 
 def main():
@@ -296,11 +356,7 @@ def main():
     with calc:
         render_calculator_tab()
     with agent:
-        render_placeholder_tab(
-            "Agent", "Phase 4",
-            "The product: full node-by-node agent trace + grounded answer, citations, and "
-            "the 'not legal advice' disclaimer.",
-        )
+        render_agent_tab()
 
 
 main()
