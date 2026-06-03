@@ -306,7 +306,7 @@ def render_agent_tab():
     ]
     example = st.selectbox("Example question (or type your own below)", ["—"] + examples)
     default = "" if example == "—" else example
-    question = st.text_input("Your question", value=default, key="agent_q")
+    question = st.text_input("Your question", value=default)
 
     if not st.button("Run agent", type="primary") or not question.strip():
         return
