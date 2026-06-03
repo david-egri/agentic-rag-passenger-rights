@@ -6,8 +6,9 @@ no argument about whether they count (CLAUDE.md guardrail #2):
 - `retrieve_passenger_rights` — retrieval, lives here because the RAG subgraph uses it
   (Phase 2). It embeds the query (with the `search_query:` prefix) and runs a top-k
   similarity search over the persisted Chroma collection.
-- `calculate_compensation` — the non-retrieval, deterministic, LLM-free calculator,
-  arrives in Phase 3.
+- `calculate_compensation` — the non-retrieval, deterministic, LLM-free calculator. A thin
+  `@tool` wrapper; the pure Art. 7 logic (haversine, band table, threshold/reduction) lives
+  in `src/calculator.py` and is what the test set targets.
 
 `retrieve_passenger_rights` returns chunk text + citation metadata so the subgraph's
 `generate` node can cite `source` + `article` and never dumps raw text as a citation.
@@ -16,6 +17,7 @@ no argument about whether they count (CLAUDE.md guardrail #2):
 from langchain_core.tools import tool
 
 import config
+from src.calculator import compute_compensation
 from src.store import embed_query, get_collection
 
 
@@ -47,3 +49,36 @@ def retrieve_passenger_rights(query: str, top_k: int | None = None) -> list[dict
     metas = res["metadatas"][0]
     dists = res["distances"][0]
     return [{"text": t, "metadata": m, "distance": d} for t, m, d in zip(docs, metas, dists)]
+
+
+@tool
+def calculate_compensation(
+    origin_iata: str,
+    dest_iata: str,
+    delay_hours: float,
+    disruption_type: str = "delay",
+    rerouting_offered: bool = False,
+) -> dict:
+    """Compute the EU 261/2004 Art. 7 compensation for a disrupted flight (non-retrieval).
+
+    Deterministic and LLM-free: resolves both airports' coordinates (OpenFlights),
+    computes great-circle distance, maps it to the €250 / €400 / €600 distance band, then
+    applies the 3-hour delay threshold and the 50%-reduction rule. Returns the *statutory
+    candidate* amount — it does NOT judge extraordinary circumstances (that gate is applied
+    when the agent synthesizes the final answer).
+
+    Args:
+        origin_iata: IATA code of the departure airport (e.g. "BUD").
+        dest_iata: IATA code of the final destination (e.g. "LHR").
+        delay_hours: arrival delay at the final destination, in hours.
+        disruption_type: "delay", "cancellation", or "denied_boarding".
+        rerouting_offered: whether the carrier offered re-routing (enables the 50% reduction
+            when the arrival delay is within the band's limit).
+
+    Returns:
+        A dict with distance_km, band, base_amount_eur, threshold_met, reduction_applied,
+        final_amount_eur, resolved airport names, and a human-readable `explanation`.
+    """
+    return compute_compensation(
+        origin_iata, dest_iata, delay_hours, disruption_type, rerouting_offered
+    )
