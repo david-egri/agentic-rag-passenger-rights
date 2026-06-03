@@ -22,6 +22,7 @@ The living implementation plan — **what** we're building and **when**, plus cu
 
 ## Phase 1 — LLM backend + minimal chat UI  `[ ]`
 **Goal:** A runnable spine on day one — talk to the model directly.
+- [ ] Python env: `.python-version` pinned to **3.12**, stdlib `venv`, pinned `requirements.txt` (no Poetry/conda/uv)
 - [ ] `src/llm.py` with `LLM_BACKEND=ollama|dummy` switch; `temperature=0`
 - [ ] `config.yaml` + env loading (model names, Ollama URL, top-k — no hardcoding)
 - [ ] Streamlit app shell (`app/streamlit_app.py`) with a tab layout + a **Chat (LLM)** tab wired to the LLM

@@ -322,7 +322,7 @@ Each item lists the **path it exercises** and the **expected answer / ground tru
 1. **Hallucination firewall.** The `generate` node must answer only from retrieved chunks and the fallback node must fire for out-of-scope queries. Grade this in the eval (items 14–15).
 2. **Citations, always.** Every rights answer cites source + article. This is the cheapest way to demonstrate "quality processing" and trustworthiness.
 3. **"Not legal advice" disclaimer** in every answer that interprets the rules.
-4. **Reproducibility hygiene** (a named grading criterion): pin dependency versions, set `temperature=0` and a fixed seed where supported, commit the frozen corpus snapshot + `SOURCES.md`, make ingestion idempotent, and document the plain run commands (ingest, then `streamlit run`).
+4. **Reproducibility hygiene** (a named grading criterion): pin Python (3.12, via `.python-version`) and isolate with a stdlib `venv`, pin dependency versions in `requirements.txt`, set `temperature=0` and a fixed seed where supported, commit the frozen corpus snapshot + `SOURCES.md`, make ingestion idempotent, and document the plain run commands (create venv, install, ingest, then `streamlit run`). The Dockerfile pins the same `python:3.12-slim` base so local and container match.
 5. **Observability for the UI requirement.** The `trace` in state isn't optional polish — it's what makes the "show the agent's steps" requirement real.
 6. **Config over hardcoding.** `LLM_BACKEND`, model names, top-k, Ollama URL via env/`config.yaml`. Enables the dummy-mode load test and clean Docker wiring.
 7. **Unit tests for the calculator.** Deterministic and trivial to test — easy, high-credibility coverage (distance bands, threshold, reduction rule).
@@ -342,9 +342,10 @@ eu261-agentic-rag/
 ├── notes/
 │   ├── PROJECT_PROPOSAL.md        # this file — full design rationale
 │   └── TASK_DESCRIPTION.md        # original task brief
-├── Dockerfile
+├── Dockerfile                     # base python:3.12-slim (matches local env)
 ├── docker-compose.yml             # bonus: app + ollama services
-├── requirements.txt / pyproject.toml
+├── requirements.txt               # pinned deps (installed into a stdlib venv)
+├── .python-version                # pins Python 3.12
 ├── config.yaml
 ├── data/
 │   ├── corpus/                    # frozen text snapshot (3 docs)

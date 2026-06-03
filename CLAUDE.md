@@ -46,7 +46,8 @@ This is an **interview prototype**. Optimize for a small, clean, reproducible, w
 - **Embeddings:** `sentence-transformers` — `BAAI/bge-small-en-v1.5` (fallback `all-MiniLM-L6-v2`)
 - **LLM:** local instruct model via Ollama (7–8B default; 3B for routing/extraction on constrained hardware) — switchable to `dummy`
 - **UI:** Streamlit
-- **Container:** Docker (+ docker-compose for app + ollama)
+- **Runtime/env:** Python **3.12** (pinned via `.python-version`), isolated with stdlib **`venv`**, deps pinned in `requirements.txt` (no Poetry/conda/uv)
+- **Container:** Docker base `python:3.12-slim` (matches local) (+ docker-compose for app + ollama)
 
 ---
 
@@ -55,6 +56,7 @@ This is an **interview prototype**. Optimize for a small, clean, reproducible, w
 No Make — run plain, documented commands (keep them in sync in `PLAN.md`/README):
 
 ```bash
+python3.12 -m venv .venv && . .venv/bin/activate   # one-time: create + activate the env
 pip install -r requirements.txt          # install pinned deps
 python -m src.ingest                      # parse + chunk + embed corpus -> ChromaDB (idempotent)
 streamlit run app/streamlit_app.py        # launch the Streamlit UI

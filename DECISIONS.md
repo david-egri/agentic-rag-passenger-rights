@@ -21,6 +21,13 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Python env: venv + pinned requirements + Python 3.12  (`python-env`)
+**[decision]** Local env is stdlib **`venv`** with deps pinned in **`requirements.txt`**; Python pinned to **3.12** via `.python-version`; the Dockerfile uses `python:3.12-slim` so local and container match. No Poetry/conda/uv. Resolves the old `requirements.txt / pyproject.toml` ambiguity in the proposal repo tree → `requirements.txt`.
+**Why:** Lowest-ceremony option consistent with the "no Make / plain commands" stance, no extra tooling for a reviewer to install, and it closes the reproducibility gaps the docs had left open (no isolation strategy, no Python version pin). 3.12 has solid wheel support across LangGraph/Chroma/sentence-transformers.
+**How to apply:** `python3.12 -m venv .venv && . .venv/bin/activate` then `pip install -r requirements.txt`. Keep `.python-version` and the Dockerfile base in sync at 3.12.
+**Revisit if:** a dependency lacks a 3.12 wheel (fall back to 3.11) or native/ML deps turn painful via pip (consider conda).
+Related: [[build-approach-ui-spine]].
+
 ## 2026-06-03 — Streamlit UI evolves as one-tab-per-layer  (`ui-tabs-per-layer`)
 **[decision]** The UI is a tabbed app that gains a tab each phase: **Chat (LLM)** → **Corpus** → **RAG** → **Calculator** → **Agent**. The first four are inspector/dev-demo tabs; the **Agent** tab is the product and is the one that satisfies the task's UI requirement (agent steps + RAG result).
 **Why:** Keeps every layer independently runnable and demonstrable (great for a live walkthrough and as the functional-test harness), and makes otherwise-invisible scoring criteria visible — the Corpus tab shows "quality processing"/structure-aware chunking; the RAG tab surfaces the corrective grade→rewrite loop (the most "agentic" behaviour). Over-delivers on the deliberately-minimal brief without much cost.
