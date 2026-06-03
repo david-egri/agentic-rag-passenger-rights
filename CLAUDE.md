@@ -59,14 +59,14 @@ No Make — run plain, documented commands (keep them in sync in `PLAN.md`/READM
 python3.14 -m venv .venv && . .venv/bin/activate   # one-time: create + activate the env
 pip install -r requirements.txt          # install pinned deps
 python -m src.ingest                      # parse + chunk + embed corpus -> ChromaDB (idempotent)
-streamlit run app/streamlit_app.py        # launch the Streamlit UI
+streamlit run streamlit_app.py            # launch the Streamlit UI
 python -m eval.functional_eval            # run functional eval over eval/eval_set.yaml
 python -m eval.loadtest                   # run the 50-200 query load test
 pytest tests/test_calculator.py           # the one classic-test exception (deterministic calculator)
 docker compose up                         # app + ollama end-to-end
 ```
 
-(Module paths are indicative — match them to the actual layout as it lands.) Backend: `LLM_BACKEND=ollama` (only one wired for now; the seam allows adding others). Configure model names, Ollama URL, and top-k in `config.yaml` / env — never hardcode.
+(Module paths are indicative — match them to the actual layout as it lands.) Backend: `LLM_BACKEND=ollama` (only one wired for now; the seam allows adding others). Configure model names, Ollama URL, and top-k in `config.py` / env — never hardcode.
 
 ---
 
@@ -83,10 +83,10 @@ docker compose up                         # app + ollama end-to-end
 6. `synthesize` — merge rights answer + amount + citations + disclaimer
 7. `fallback` — out-of-scope handling (hallucination firewall)
 
-**RAG subgraph** (`src/rag/graph.py`) — modular, **does NOT count toward the 5**; corrective RAG:
+**RAG subgraph** (`src/rag.py`) — modular, **does NOT count toward the 5**; corrective RAG:
 `retrieve → grade_documents → (relevant? generate : rewrite_query → retrieve)` with a **bounded** rewrite loop (max 1–2 retries).
 
-**Tools** (`src/tools/`):
+**Tools** (`src/tools.py`):
 - `retrieve_passenger_rights(query)` — retrieval (used in the subgraph)
 - `calculate_compensation(origin_iata, dest_iata, delay_hours, disruption_type, rerouting_offered=False)` — **non-retrieval**: haversine distance from OpenFlights coords → band → amount → apply 3h threshold + 50% reduction rule
 
@@ -108,9 +108,10 @@ Framing to be ready to defend: this is a **directed/structured agent** (the grap
 
 ## Conventions
 
+- **Least ceremony that meets the requirement.** This is an interview prototype graded on "quality, not quantity" — prefer the simplest construct that does the job: module-level constants and plain functions over config frameworks, registries, or factory indirection; **flat modules** (`src/tools.py`, `src/rag.py`, `src/ingest.py`) over nested packages until a module genuinely earns splitting. Introduce abstraction when a second real case appears, not in anticipation. **Guardrail — this never applies to the required agent architecture:** the ≥5-node graph, the typed `AgentState`, the compiled RAG subgraph, and the explicit `@tool`s are *requirements*, not ceremony — keep them even though they add structure. Module paths elsewhere in these docs (and the proposal's repo tree) are *indicative*; default to flat. See DECISIONS `simplify-p1`.
 - **Chunk by legal structure** (Article / Recital), not fixed token windows; sub-split only oversized articles by paragraph with small overlap. Attach metadata (`source`, `article`, `title`, `url`, `retrieved_at`, `chunk_id`) to every chunk.
 - **Citations reference metadata**, never raw chunk text dumps.
-- **Config over hardcoding** — all knobs in `config.yaml`/env.
+- **Config over hardcoding** — all knobs in `config.py` (constants + env override), never scattered/hardcoded.
 - **Bounded loops** — cap the corrective-RAG rewrite retries to keep latency sane.
 - **Stream the graph** in Streamlit (`graph.stream`) and append each node's output to the `trace` panel so the user watches the agent work (this scores the "demonstrate agent operation" requirement).
 - **Run independent subtasks concurrently** for `mixed` queries where practical.

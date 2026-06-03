@@ -26,10 +26,10 @@ The living implementation plan — **what** we're building and **when**, plus cu
 - [x] `.gitignore`: `.venv/`, `__pycache__/`, `*.pyc`, `data/chroma/` (chroma is derived, rebuilt from corpus)
 - [x] Model present: `qwen2.5:3b-instruct` already pulled in Ollama (tag note — see DECISIONS `model-tag`)
 - [x] `src/llm.py` exposing a single `get_llm()` behind an `LLM_BACKEND` seam (only `ollama` wired now; keep it pluggable so a stub can be added later); `temperature=0`
-- [x] `config.yaml` + env loading (`src/config.py`) — knobs: `llm_backend`, `model` (`qwen2.5:3b-instruct`), `ollama_url`, `temperature`, `top_k`, `rewrite_max_retries`, `embedding_model` (no hardcoding; env overrides file)
-- [x] Streamlit app shell (`app/streamlit_app.py`) with a tab layout (Chat active; Corpus/RAG/Calculator/Agent graceful placeholders) + a **Chat (LLM)** tab wired to the LLM (streamed)
+- [x] `config.py` — constants + env override for knobs: `LLM_BACKEND`, `MODEL` (`qwen2.5:3b-instruct`), `OLLAMA_URL`, `TEMPERATURE`, `TOP_K`, `REWRITE_MAX_RETRIES`, `EMBEDDING_MODEL` (no hardcoding; env wins) — simplified from a config.yaml+Config class, see DECISIONS `simplify-p1`
+- [x] Streamlit app shell (`streamlit_app.py`, repo root) with a tab layout (Chat active; Corpus/RAG/Calculator/Agent graceful placeholders) + a **Chat (LLM)** tab wired to the LLM (streamed)
 - [x] Sidebar showing active backend / model / top-k (persistent across tabs)
-- [x] Pinned `requirements.txt`; run command documented (`streamlit run app/streamlit_app.py`)
+- [x] Pinned `requirements.txt`; run command documented (`streamlit run streamlit_app.py`)
 **Done when:** you can chat with the `qwen2.5:3b-instruct` model from the Chat tab. ✅ verified — round-trip + streaming through `get_llm()` and headless Streamlit boot (HTTP 200).
 
 ## Phase 2 — Corpus + RAG subgraph  `[ ]`
