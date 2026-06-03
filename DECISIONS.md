@@ -21,6 +21,26 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Simplify Phase 1: drop config framework, flatten layout  (`simplify-p1`)
+**[decision]** After reviewing the first Phase 1 build, traded structure for readability/iteration speed (it's an interview prototype — "quality, not quantity"):
+- **Config:** replaced `config.yaml` + a `Config` dataclass (YAML load, env-mapping, `lru_cache`, key validation, ~100 lines) with a single root **`config.py`** of plain constants + `os.getenv` defaults (~20 lines). Still centralized + env-overridable → honors the "config over hardcoding" convention; drops type validation and external YAML editing.
+- **LLM seam:** kept `get_llm()` (it *is* the required seam — CLAUDE.md non-neg #1) but gutted the internals — removed the `_BACKENDS` registry, builder indirection, and custom error class. Now ~6 lines: one guard + construct `ChatOllama`. Adding a stub later is one `if` branch.
+- **Layout:** moved the Streamlit entrypoint from `app/streamlit_app.py` to repo-root **`streamlit_app.py`**, deleting the `sys.path.insert` hack (root is on `sys.path` automatically). Kept the **`src/`** package — it's the home for the agent code landing in P2–P4 (`graph.py`, `rag/`, `tools/`, `state.py`, `ingest.py`); flattening it now would just be re-introduced later.
+**Why:** The framework-y pieces were speculative gold-plating for a six-knob, one-backend prototype; they hurt readability and slowed iteration without buying anything yet. The simplifications preserve every non-negotiable (local LLM, single `get_llm()` seam, knobs-in-one-place, reproducibility/`temperature=0`).
+**Revisit if:** config grows many interdependent knobs (then a typed/validated loader earns its place) or a real second LLM backend lands (then a small dispatch returns).
+Related: [[python-314]], [[model-tag]], [[drop-dummy-llm]], [[build-approach-ui-spine]].
+
+## 2026-06-03 — Python pin moved 3.12 → 3.14  (`python-314`)
+**[revisit]** The local machine only had Python **3.14.5** installed (no 3.12). Rather than `brew install python@3.12`, we moved the pin to **3.14**: `.python-version` = `3.14`, and the Docker base becomes `python:3.14-slim` (Phase 6). Supersedes the 3.12 decision in [[python-env]].
+**Why:** Lowest-friction path on the available machine; 3.14 had native cp314 wheels for the entire Phase 1 stack (streamlit 1.58, langchain-ollama 1.1, pydantic, numpy, pyarrow) — `pip install` resolved cleanly with no source builds.
+**Revisit if:** Phase 2 ML deps (chromadb, sentence-transformers, torch) lack cp314 wheels → fall back to 3.13 or 3.12 (would then require installing that interpreter). This is the main open risk of the 3.14 choice.
+Related: [[python-env]], [[build-approach-ui-spine]].
+
+## 2026-06-03 — Local model tag is `qwen2.5:3b-instruct`  (`model-tag`)
+**[decision]** `config.py` `MODEL` defaults to **`qwen2.5:3b-instruct`** — the tag already pulled locally — rather than the canonical `qwen2.5:3b` written in the docs. Same underlying Qwen2.5 3B Instruct model; avoids a redundant ~1.9 GB pull. Refines [[llm-model]].
+**Why:** The instruct tag was already present in Ollama; `qwen2.5:3b` resolves to the same instruct weights anyway. The `model` knob keeps it swappable, so the literal string is not load-bearing.
+Related: [[llm-model]].
+
 ## 2026-06-03 — Working agreement: plan-first, user drives commits/merges  (`working-agreement`)
 **[decision]** Per-phase loop: orient (read PLAN next phase + skim DECISIONS) → **post a short plan and wait for approval before coding** → branch+push → build (ticking PLAN, logging to DECISIONS) → **the user explicitly triggers every commit, merge, and tag** (never autonomous, even mid-phase) → on approval, update PLAN status and do the merge/tag/push. Documented in CLAUDE.md (Working agreement).
 **Why:** Keeps the user in control of integration and history, and makes the collaboration loop survive fresh contexts (a cold agent otherwise wouldn't know to plan-first or that the user drives commits). Matches the rhythm used while planning.
@@ -28,7 +48,7 @@ Format:
 Related: [[git-workflow]].
 
 ## 2026-06-03 — Pinned LLM: qwen2.5:3b (constrained hardware)  (`llm-model`)
-**[revisit]** Default Ollama model pinned to **`qwen2.5:3b`** (Qwen2.5 3B Instruct); `llama3.2:3b` is the alternative. `config.yaml` `model` knob makes it swappable.
+**[revisit]** Default Ollama model pinned to **`qwen2.5:3b`** (Qwen2.5 3B Instruct); `llama3.2:3b` is the alternative. `config.py` `MODEL` knob makes it swappable.
 **Why:** User confirmed constrained hardware, so 3B is the tier. Qwen2.5 3B has good structured/JSON-output adherence, which matters for intake (JSON), router, and the RAG grader. Reproducibility non-negotiable wants a concrete pin, not a candidate list.
 **Revisit if:** routing/extraction reliability or generation quality proves weak at 3B → bump to a 7–8B instruct model (Llama 3.1 8B / Qwen2.5 7B), or split models (small for routing/extraction, larger for final generation). Also revisit if a different model handles structured output more reliably.
 Related: [[drop-dummy-llm]].

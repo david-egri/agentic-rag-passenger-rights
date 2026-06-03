@@ -1,0 +1,8 @@
+# Pinned dependencies. Reproducibility is a non-negotiable (see CLAUDE.md).
+# Phase 1 set: LLM backend + Streamlit chat spine. Corpus/RAG deps
+# (chromadb, sentence-transformers, langgraph) arrive in later phases.
+
+streamlit==1.58.0          # UI spine (one tab per phase)
+langchain-ollama==1.1.0    # ChatOllama backend behind the get_llm() seam
+langchain-core==1.4.0      # message types / shared LangChain primitives
+PyYAML==6.0.3              # config.yaml loading

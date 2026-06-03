@@ -335,6 +335,9 @@ Each item lists the **path it exercises** and the **expected answer / ground tru
 
 ## 11. Suggested Repository Structure
 
+> **Superseded in part (2026-06-03) — see DECISIONS `simplify-p1`, `python-314`, `model-tag`.**
+> The tree below predates the Phase-1 simplification; treat it as *what* exists, not the exact paths. Current layout: root **`config.py`** (no `config.yaml`), root **`streamlit_app.py`** (no `app/`), **flat modules** under `src/` (`src/llm.py`, and as later phases land `src/tools.py`, `src/rag.py`, `src/ingest.py`, `src/state.py`, `src/graph.py`) rather than nested `nodes/`/`rag/`/`tools/`/`ingest/` packages, and **Python 3.14** (not 3.12; Docker base `python:3.14-slim`). The §6.6 `config.yaml` and §7 `app/streamlit_app.py` references are likewise superseded. Add nesting only when a module genuinely earns it.
+
 ```
 eu261-agentic-rag/
 ├── README.md                      # problem, architecture + design justification, eval/perf summary, install/run

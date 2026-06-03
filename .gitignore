@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Project-specific ---
+# Derived vector store: rebuilt from data/corpus/ via idempotent `python -m src.ingest`.
+# The frozen corpus is the only source of truth and IS committed.
+data/chroma/
