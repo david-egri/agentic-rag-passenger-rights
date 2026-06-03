@@ -23,12 +23,14 @@ The living implementation plan — **what** we're building and **when**, plus cu
 ## Phase 1 — LLM backend + minimal chat UI  `[ ]`
 **Goal:** A runnable spine on day one — talk to the model directly.
 - [ ] Python env: `.python-version` pinned to **3.12**, stdlib `venv`, pinned `requirements.txt` (no Poetry/conda/uv)
+- [ ] `.gitignore`: `.venv/`, `__pycache__/`, `*.pyc`, `data/chroma/` (chroma is derived, rebuilt from corpus)
+- [ ] `ollama pull qwen2.5:3b` (pinned default model — see DECISIONS `llm-model`)
 - [ ] `src/llm.py` exposing a single `get_llm()` behind an `LLM_BACKEND` seam (only `ollama` wired now; keep it pluggable so a stub can be added later); `temperature=0`
-- [ ] `config.yaml` + env loading (model names, Ollama URL, top-k — no hardcoding)
+- [ ] `config.yaml` + env loading — knobs: `llm_backend`, `model` (`qwen2.5:3b`), `ollama_url`, `top_k`, `rewrite_max_retries`, `embedding_model` (no hardcoding)
 - [ ] Streamlit app shell (`app/streamlit_app.py`) with a tab layout + a **Chat (LLM)** tab wired to the LLM
 - [ ] Sidebar showing active backend / model / top-k (persistent across tabs)
 - [ ] Pinned `requirements.txt`; run command documented (`streamlit run app/streamlit_app.py`)
-**Done when:** you can chat with the Ollama model from the Chat tab.
+**Done when:** you can chat with the `qwen2.5:3b` model from the Chat tab.
 
 ## Phase 2 — Corpus + RAG subgraph  `[ ]`
 **Goal:** Grounded, cited retrieval that self-corrects — visible in the UI.

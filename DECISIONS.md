@@ -21,6 +21,18 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Working agreement: plan-first, user drives commits/merges  (`working-agreement`)
+**[decision]** Per-phase loop: orient (read PLAN next phase + skim DECISIONS) → **post a short plan and wait for approval before coding** → branch+push → build (ticking PLAN, logging to DECISIONS) → **the user explicitly triggers every commit, merge, and tag** (never autonomous, even mid-phase) → on approval, update PLAN status and do the merge/tag/push. Documented in CLAUDE.md (Working agreement).
+**Why:** Keeps the user in control of integration and history, and makes the collaboration loop survive fresh contexts (a cold agent otherwise wouldn't know to plan-first or that the user drives commits). Matches the rhythm used while planning.
+**Revisit if:** the user later wants faster cycles (e.g. autonomous checkpoint commits on the branch, or just-build for small phases).
+Related: [[git-workflow]].
+
+## 2026-06-03 — Pinned LLM: qwen2.5:3b (constrained hardware)  (`llm-model`)
+**[revisit]** Default Ollama model pinned to **`qwen2.5:3b`** (Qwen2.5 3B Instruct); `llama3.2:3b` is the alternative. `config.yaml` `model` knob makes it swappable.
+**Why:** User confirmed constrained hardware, so 3B is the tier. Qwen2.5 3B has good structured/JSON-output adherence, which matters for intake (JSON), router, and the RAG grader. Reproducibility non-negotiable wants a concrete pin, not a candidate list.
+**Revisit if:** routing/extraction reliability or generation quality proves weak at 3B → bump to a 7–8B instruct model (Llama 3.1 8B / Qwen2.5 7B), or split models (small for routing/extraction, larger for final generation). Also revisit if a different model handles structured output more reliably.
+Related: [[drop-dummy-llm]].
+
 ## 2026-06-03 — Git workflow: phase branches, merge commits, phase tags  (`git-workflow`)
 **[decision]** One branch per phase named `phase/N-slug`; integrate into `main` via `--no-ff` merge commits; annotate each phase's merge commit with a `phase-N-slug` tag; keep phase branches (don't delete) and push `main` + branches + tags. Non-phase branches use `type/slug` (`fix/`, `docs/`, `chore/`, `refactor/`, `spike/`), chosen per case. Full convention in CLAUDE.md (Git workflow).
 **Why:** Merge commits keep a visible per-phase boundary in history; tags make each completed phase a referenceable checkpoint (easy to diff/checkout a phase); kept+pushed branches preserve the per-phase record on the remote. Matches the branch-per-phase plan and the documentation-routing setup.

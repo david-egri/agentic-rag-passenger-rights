@@ -239,7 +239,7 @@ Deterministic, testable, no LLM:
 ## 6. Model Selection (no paid APIs)
 
 ### 6.1 Recommendation
-- **LLM:** run a local **instruct model via Ollama** (OpenAI-compatible endpoint → trivial LangChain/LangGraph integration). Good default: a **7–8B instruct** model (e.g., Llama 3.1 8B Instruct or Qwen2.5 7B Instruct, or a newer equivalent). For constrained hardware, drop to a **3B instruct** model for the routing/extraction calls and keep the larger model only for final generation.
+- **LLM:** run a local **instruct model via Ollama** (OpenAI-compatible endpoint → trivial LangChain/LangGraph integration). **Pinned default: `qwen2.5:3b`** (Qwen2.5 3B Instruct) — chosen for constrained hardware and its solid structured/JSON-output adherence (`llama3.2:3b` is the alternative); see DECISIONS (`llm-model`). On roomier hardware a 7–8B instruct model (Llama 3.1 8B / Qwen2.5 7B) would lift generation quality.
 - **Embeddings:** `BAAI/bge-small-en-v1.5` (strong quality, CPU-friendly) with `all-MiniLM-L6-v2` as the lighter fallback. Both run locally via `sentence-transformers`.
 
 ### 6.2 Trade-offs to write up
@@ -353,7 +353,7 @@ eu261-agentic-rag/
 │   ├── corpus/                    # frozen text snapshot (3 docs)
 │   ├── rules/compensation_rules.yaml
 │   ├── airports.dat               # OpenFlights
-│   ├── chroma/                    # persisted vector store (gitignored or committed small)
+│   ├── chroma/                    # persisted vector store (gitignored; rebuilt from corpus via ingest)
 │   └── SOURCES.md                 # urls, dates, licenses
 ├── src/
 │   ├── state.py

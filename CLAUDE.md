@@ -44,7 +44,7 @@ This is an **interview prototype**. Optimize for a small, clean, reproducible, w
 - **Orchestration:** LangGraph (main graph + a separate compiled RAG subgraph)
 - **Vector store:** ChromaDB (persisted at `data/chroma/`)
 - **Embeddings:** `sentence-transformers` — `BAAI/bge-small-en-v1.5` (fallback `all-MiniLM-L6-v2`)
-- **LLM:** local instruct model via Ollama (7–8B default; 3B for routing/extraction on constrained hardware), behind a pluggable `LLM_BACKEND` seam
+- **LLM:** **`qwen2.5:3b`** (Qwen2.5 3B Instruct) via Ollama — pinned default for constrained hardware, good at structured/JSON output; `llama3.2:3b` is the noted alternative. Behind a pluggable `LLM_BACKEND` seam. See DECISIONS (`llm-model`).
 - **UI:** Streamlit
 - **Runtime/env:** Python **3.12** (pinned via `.python-version`), isolated with stdlib **`venv`**, deps pinned in `requirements.txt` (no Poetry/conda/uv)
 - **Container:** Docker base `python:3.12-slim` (matches local) (+ docker-compose for app + ollama)
@@ -115,6 +115,20 @@ Framing to be ready to defend: this is a **directed/structured agent** (the grap
 - **Stream the graph** in Streamlit (`graph.stream`) and append each node's output to the `trace` panel so the user watches the agent work (this scores the "demonstrate agent operation" requirement).
 - **Run independent subtasks concurrently** for `mixed` queries where practical.
 - **Log implementation decisions in `DECISIONS.md`** — whenever a trade-off is made, an arbitrary/placeholder choice is taken that must be revised later, or a non-obvious gotcha surfaces, append a dated entry (newest first) using the tags in that file.
+- **Repo hygiene.** Commit the frozen corpus snapshot (`data/corpus/`); **gitignore** `data/chroma/` (rebuilt from the corpus via idempotent ingest), `.venv/`, `__pycache__/`, `*.pyc`. Only the corpus is the source of truth — the vector store is a derived artifact.
+
+---
+
+## Working agreement (how to run a phase with the user)
+
+When asked to implement a phase — especially in a fresh context — follow this loop:
+
+1. **Orient.** Read `PLAN.md` for the next phase (first non-done) and skim `DECISIONS.md` for choices that touch it. State which phase you're starting.
+2. **Plan first, then wait.** Post a short plan (files to add/change, approach, decisions to make) and **wait for the user's approval before writing code.** Don't start coding on assumption.
+3. **Branch.** Create and push the phase branch per the Git workflow (`phase/N-slug`).
+4. **Build.** Implement against the phase's deliverables. As you go: tick `PLAN.md` boxes, and log any trade-off / deferred choice / gotcha in `DECISIONS.md` (route per the Document map).
+5. **The user drives commits and integration.** Do **not** commit, merge, or tag unless the user explicitly asks — even mid-phase. When asked to "commit", do it; the phase-end `--no-ff` merge + `phase-N-slug` tag + push happen **only** on the user's say-so.
+6. **Close.** When deliverables are met and the user approves, update `PLAN.md` status, then perform the merge/tag/push (per Git workflow).
 
 ---
 
