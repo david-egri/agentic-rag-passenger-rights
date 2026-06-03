@@ -308,12 +308,26 @@ def render_agent_tab():
         st.info("**Corpus not ingested yet.** Run `python -m src.ingest` first (the agent needs retrieval).")
         return
 
+    # Curated to walk every direction of the graph + the key sub-behaviours. Each was run
+    # through agent_graph to confirm it routes/computes as intended (the 3B classifier is
+    # fickle — several plausible questions misrouted and were dropped). Grouped by path:
     examples = [
+        # rights_info → rag → synthesize
         "What are my rights if my flight is cancelled?",
-        "My flight from Budapest to London was delayed 4 hours. How much compensation do I get?",
-        "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",
-        "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",
+        "What assistance must an airline provide during a long delay?",
+        # compensation_calc → calculator ‖ rag→eligibility → synthesize (distance bands, threshold, reduction, denied boarding)
+        "My flight from Budapest to London was delayed 4 hours. How much compensation do I get?",          # short-haul → €250
+        "My Athens to London flight was delayed 4 hours — what compensation am I owed?",                    # medium-haul → €400
+        "My Frankfurt to Bangkok flight arrived 5 hours late. How much am I entitled to?",                  # long-haul → €600
+        "My Paris to Amsterdam flight was delayed 2 hours — am I owed compensation?",                       # under the 3 h threshold → €0
+        "I was denied boarding on my Vienna to London flight because it was overbooked. How much can I claim?",  # denied boarding → €250
+        "My Lisbon to Paris flight was cancelled, but I was rerouted and arrived only 2 hours late. What compensation applies?",  # 50% reduction → €125
+        # mixed → planner → calculator ‖ rag→eligibility → synthesize (eligibility gate)
+        "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",  # own-staff strike = compensable → €250
+        "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",  # weather = extraordinary → €0
+        # out_of_scope → fallback (hallucination firewall)
         "How much does it cost to bring a dog on the flight?",
+        "Does EU passenger rights law cover my lost or damaged luggage?",
     ]
     example = st.selectbox("Example question (or type your own below)", ["—"] + examples)
     default = "" if example == "—" else example
