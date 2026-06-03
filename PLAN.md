@@ -32,15 +32,17 @@ The living implementation plan — **what** we're building and **when**, plus cu
 - [x] Pinned `requirements.txt`; run command documented (`streamlit run streamlit_app.py`)
 **Done when:** you can chat with the `qwen2.5:3b-instruct` model from the Chat tab. ✅ verified — round-trip + streaming through `get_llm()` and headless Streamlit boot (HTTP 200).
 
-## Phase 2 — Corpus + RAG subgraph  `[ ]`
+## Phase 2 — Corpus + RAG subgraph  `[x]`
 **Goal:** Grounded, cited retrieval that self-corrects — visible in the UI.
-- [ ] Ingestion: generic **drop-in directory loader** → structure-aware chunkers → metadata → ChromaDB (idempotent)
-- [ ] Commit frozen corpus + `data/SOURCES.md`
-- [ ] `retrieve_passenger_rights` as an explicit `@tool` (the retrieval tool lives here, with RAG)
-- [ ] Corrective-RAG subgraph (compiled `StateGraph`): retrieve → grade → (rewrite → retrieve, bounded) → generate
-- [ ] **UI gains — Corpus tab:** browse chunks per document, structure boundaries (Article/Recital), per-chunk metadata, counts (makes "quality processing" visible)
-- [ ] **UI gains — RAG tab:** query → retrieved chunks (scores + metadata) → grade decision → rewritten query (if any) → generated answer + citations (surfaces the corrective loop)
-**Done when:** dropping a file into `data/corpus/` + re-running ingestion indexes it with no code changes; Corpus + RAG tabs render and answers are grounded + cited.
+- [x] Ingestion (`src/ingest.py`): generic **drop-in directory loader** → content-detected type → structure-aware chunkers (regulation Article/Recital · Commission-notice numbered sections · semantic HTML `<h1>`–`<h4>` headings · Markdown headings) + paragraph-overlap size guard → citation metadata → ChromaDB (idempotent rebuild). Embeddings reuse local Ollama (`src/store.py`).
+- [x] Freeze corpus — 4 docs: reg 261/2004 + **2024** interpretative guidelines + EUR-Lex legislative summary (`LEGISSUM:l24173`) + Your Europe plain-language summary — + `data/SOURCES.md` + `data/corpus/sources.json`. **Note:** `/data/` is gitignored for now (user decision) — corpus stays local, **not committed**; commit-vs-fetch decision deferred to Phase 6. See DECISIONS `gitignore-data-for-now`.
+- [x] `retrieve_passenger_rights` as an explicit `@tool` (`src/tools.py`)
+- [x] Corrective-RAG subgraph (`src/rag.py`, compiled `StateGraph`): retrieve → grade → (rewrite → retrieve, bounded by `REWRITE_MAX_RETRIES`) → generate; LLM grader + cosine-distance safety floor; generate is grounded (no outside knowledge / invented figures)
+- [x] **UI — Corpus tab:** counts, per-document chunk browse with Article/Recital/Section labels, per-chunk metadata, filter; graceful "not ingested" state
+- [x] **UI — RAG tab:** query → corrective-RAG trace (retrieve hits → grade verdict → rewrite → generate) → grounded answer + citations + disclaimer; retrieved passages with distances. Reusable components in `ui_components.py`.
+**Done when:** dropping a file into `data/corpus/` + re-running ingestion indexes it with no code changes; Corpus + RAG tabs render and answers are grounded + cited. ✅ verified — drop-in test (new `.md` → indexed → retrievable, no code change), grader/grounding behaviour exercised, headless Streamlit boot HTTP 200.
+**Note:** 3B generation quality is the limiting factor on answer polish (architecture is sound); calibrate the grader floor + consider a larger model in Phase 5 eval. See DECISIONS `rag-grader`, `embeddings-ollama`, `corpus-2024-guidelines`, `python-314-resolved`.
+**Parked polish:** OJ-notice citation labels for unnumbered dash sub-headings render as `Section · — Strikes by airline staff` (em-dash leaks in; no section number). Tidy later — ideally have dash sub-headings inherit their parent numbered section (`Section 4.3.3 · Strikes by airline staff`); affects `chunk_notice` + a re-ingest (local `data/chroma/` only).
 
 ## Phase 3 — Calculator (the non-retrieval tool)  `[ ]`
 **Goal:** Deterministic compensation tool — the factual backbone and eval ground truth.
@@ -69,7 +71,8 @@ The living implementation plan — **what** we're building and **when**, plus cu
 **Goal:** Reproducible entry point.
 - [ ] Dockerfile + docker-compose.yml (app + ollama)
 - [ ] README: problem, architecture + design justification, eval/perf summary, install/run, reform caveat
-**Done when:** `docker compose up` runs end-to-end and a fresh clone can be set up from the README alone.
+- [ ] **Corpus provenance & refresh** — resolve the deferred `/data/` gitignore (DECISIONS `gitignore-data-for-now`): either commit the frozen snapshot or add a documented/runnable `scripts/fetch_corpus.py` (Cellar API for reg + 2024 guidelines; `requests` + EUR-Lex TXT/HTML export for the legissum) so a fresh clone reproduces the corpus. Carry the licensing/attribution from `data/SOURCES.md` into a tracked location.
+**Done when:** `docker compose up` runs end-to-end and a fresh clone can be set up from the README alone (corpus reproducible — committed or fetch-scripted).
 
 ---
 
@@ -78,3 +81,4 @@ Append plan-affecting changes here (with a link to the DECISIONS.md entry that e
 
 - 2026-06-03 — Reordered build: UI-as-spine, LLM-first, corpus/RAG → calculator → agentic assembly; dropped Make; functional-testing with a calculator exception. See DECISIONS `build-approach-ui-spine`.
 - 2026-06-03 — Phase 1 built: Python pin 3.12 → **3.14** (only 3.14 available locally; Phase 1 stack has cp314 wheels — risk to re-check at Phase 2 ML deps), model default `qwen2.5:3b-instruct`. See DECISIONS `python-314`, `model-tag`.
+- 2026-06-03 — Phase 2 built. **Python 3.14 risk retired** — `langgraph` + `chromadb` (and onnxruntime/tokenizers/grpcio) all resolve cp314 wheels, no source builds (DECISIONS `python-314-resolved`). **Embeddings reuse local Ollama `nomic-embed-text`** instead of sentence-transformers/torch — lighter, no new heavy deps (DECISIONS `embeddings-ollama`). **Corpus upgraded:** 2016 → **2024** interpretative guidelines (newer case law), fetched via the Publications Office Cellar API to bypass the EUR-Lex WAF (DECISIONS `corpus-2024-guidelines`). RAG grader is LLM + distance-floor hybrid; 3B answer quality is the open quality item for Phase 5 (DECISIONS `rag-grader`). Deps `langgraph==1.2.4`, `chromadb==1.5.9` added; `PyYAML` dropped.
