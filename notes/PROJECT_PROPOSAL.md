@@ -132,34 +132,58 @@ class AgentState(TypedDict, total=False):
 
 ### 4.3 Main graph nodes (the ≥5)
 ```
-                      ┌──────────────┐
-   user query ──────► │ 1. INTAKE    │  parse + extract flight entities + classify intent
-                      └──────┬───────┘
-                             ▼
-                      ┌──────────────┐   conditional routing
-                      │ 2. ROUTER    │───────────────┐
-                      └──────┬───────┘                │ out_of_scope
-            rights_info /    │  mixed                 ▼
-            compensation_calc│                 ┌──────────────┐
-                             ▼                 │ 7. FALLBACK  │ ► polite decline / redirect
-                      ┌──────────────┐         └──────────────┘
-                      │ 3. PLANNER   │  (only for mixed: emit subtasks)
-                      └──────┬───────┘
-              ┌──────────────┼───────────────┐
-              ▼              ▼                ▼
-     ┌────────────────┐ ┌──────────────┐ (paths run as needed)
-     │ RAG SUBGRAPH   │ │ 5. CALCULATOR│
-     │ (as one node)  │ │   (tool)     │
-     └───────┬────────┘ └──────┬───────┘
-             │     ┌────────────┘
-             ▼     ▼
-        ┌──────────────┐
-        │ 4. ELIGIBILITY│ judges if disruption qualifies (uses RAG output + rules)
-        └──────┬───────┘  conditional: if not eligible, skip/zero the compensation
-               ▼
-        ┌──────────────┐
-        │ 6. SYNTHESIZE │ merge rights answer + amount + citations + disclaimer
-        └──────────────┘
+                              ┌───────────────┐
+       user query ──────────► │   1. INTAKE   │  extract flight_details + classify query_type
+                              └───────┬───────┘
+                                      ▼
+                              ┌───────────────┐
+                              │   2. ROUTER   │  node — writes query_type to state
+                              └───────┬───────┘
+                                      │ conditional edge on query_type
+          ┌───────────────────┬───────┴───────────┬──────────────────────┐
+     rights_info         out_of_scope           mixed             compensation_calc
+          │                   │                    │                      │
+          ▼                   ▼                    ▼                      │
+   ┌─────────────┐     ┌─────────────┐      ┌─────────────┐               │
+   │     RAG     │     │ 7. FALLBACK │      │ 3. PLANNER  │               │
+   │   SUBGRAPH  │     │   honest    │      │  LLM emits  │               │
+   │ (rights ans)│     │   decline   │      │   subtasks  │               │
+   └──────┬──────┘     └──────┬──────┘      └──────┬──────┘               │
+          │                   │                    └───────────┬──────────┘
+          │                   │                                │  FAN-OUT — two
+          │                   │                    ┌───────────┴───────────┐  independent
+          │                   │                    ▼                       ▼  branches
+          │                   │          ┌──────────────────┐   ┌──────────────────┐
+          │                   │          │   RAG SUBGRAPH   │   │  5. CALCULATOR   │
+          │                   │          │        │         │   │  deterministic   │
+          │                   │          │        ▼         │   │  tool, no LLM    │
+          │                   │          │  4. ELIGIBILITY  │   │ → candidate €amt │
+          │                   │          │   is it owed?    │   │  (eligibility-   │
+          │                   │          │                  │   │   agnostic)      │
+          │                   │          └─────────┬────────┘   └─────────┬────────┘
+          │                   │                    └───────────┬──────────┘
+          │                   │                                │  FAN-IN
+          │                   │                                ▼
+          │                   │                  ┌──────────────────────────────┐
+          └───────────────────┼─────────────────►│        6. SYNTHESIZE         │
+                              │                  │  gate: final = eligible      │
+                              │                  │         ? candidate : 0      │
+                              │                  │  + rights answer + citations │
+                              │                  │  + "not legal advice"        │
+                              │                  └───────────────┬──────────────┘
+                              ▼                                  ▼
+                             END                                END
+
+Notes:
+- The **router** is a real node (writes `query_type` to state); the 4-way split is the conditional
+  edge after it. `rights_info` → RAG subgraph → synthesize; `out_of_scope` → fallback → END.
+- `mixed` and `compensation_calc` share the same **fan-out → fan-in**: an eligibility branch
+  (RAG subgraph → eligibility) and a calculator branch run as **independent** siblings. `mixed`
+  passes through the **planner** first (LLM emits subtasks); `compensation_calc` enters the fan-out
+  directly. The modular RAG subgraph is reused in both the `rights_info` and eligibility branches.
+- The branches are independent because they consume different inputs (reason+rules vs. route+delay);
+  the only coupling is the **gate at synthesize** (`final = eligible ? candidate : 0`), so the
+  calculator never waits on eligibility.
 ```
 
 1. **Intake / Query Understanding** — extract `flight_details` entities (origin, destination, delay hours, disruption type, stated reason) and classify intent into one of the four `query_type`s. One LLM call with a structured-output prompt (return JSON).
