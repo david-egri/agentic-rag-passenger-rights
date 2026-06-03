@@ -29,3 +29,9 @@ GRADE_DISTANCE_FLOOR = float(os.getenv("GRADE_DISTANCE_FLOOR", "0.25"))
 CHROMA_DIR = os.getenv("CHROMA_DIR", "data/chroma")
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "passenger_rights_261")
 CORPUS_DIR = os.getenv("CORPUS_DIR", "data/corpus")
+
+# --- Calculator (Phase 3) ---
+# OpenFlights airport table (IATA → lat/lon) for great-circle distance. ODbL — attributed in
+# data/SOURCES.md. Path only; the Art. 7 band amounts/thresholds are statutory and live as
+# constants in src/calculator.py (not env knobs — see DECISIONS).
+AIRPORTS_DAT = os.getenv("AIRPORTS_DAT", "data/airports.dat")
