@@ -41,6 +41,18 @@ DELAY_THRESHOLD_HOURS = 3
 
 DISRUPTION_TYPES = ("delay", "cancellation", "denied_boarding")
 
+# IATA *metropolitan* codes → a representative primary airport. The intake LLM reliably
+# emits these for major cities (London→LON, Paris→PAR), but OpenFlights `airports.dat` only
+# carries airport codes, so a bare lookup of a metro code fails. This is a fallback applied
+# only when the direct lookup misses (so it never changes a real airport code's resolution);
+# the chosen airport is the city's principal one — close enough for the great-circle distance
+# band, which is what the amount keys off.
+METRO_ALIASES = {
+    "LON": "LHR", "PAR": "CDG", "ROM": "FCO", "MIL": "MXP", "STO": "ARN",
+    "MOW": "SVO", "BJS": "PEK", "TYO": "HND", "OSA": "KIX", "NYC": "JFK",
+    "WAS": "IAD", "CHI": "ORD", "SAO": "GRU", "RIO": "GIG", "BUE": "EZE",
+}
+
 
 class AirportNotFound(ValueError):
     """Raised when an IATA code isn't in the OpenFlights table."""
@@ -76,7 +88,10 @@ def load_airports() -> dict[str, tuple[float, float, str]]:
 def resolve_airport(iata: str) -> tuple[float, float, str]:
     """Look up one IATA code → (lat, lon, name); raise AirportNotFound if absent."""
     code = (iata or "").strip().upper()
-    airport = load_airports().get(code)
+    airports = load_airports()
+    airport = airports.get(code)
+    if airport is None and code in METRO_ALIASES:
+        airport = airports.get(METRO_ALIASES[code])  # fall back to the city's primary airport
     if airport is None:
         raise AirportNotFound(f"Unknown IATA code: {iata!r}")
     return airport

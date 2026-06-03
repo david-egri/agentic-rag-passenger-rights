@@ -66,3 +66,66 @@ def render_rag_trace(steps: list[dict]):
             st.markdown(f"✏️ **rewrite_query** (#{s['rewrites']}) → _{s['new_query']}_")
         elif node == "generate":
             st.markdown(f"📝 **generate** → answer with {s['n_citations']} citation(s)")
+
+
+def _flight_summary(details: dict) -> str:
+    """One-line summary of the non-null extracted flight fields (or a placeholder)."""
+    bits = []
+    if details.get("origin_iata") or details.get("dest_iata"):
+        bits.append(f"{details.get('origin_iata') or '?'} → {details.get('dest_iata') or '?'}")
+    if details.get("delay_hours") is not None:
+        bits.append(f"{details['delay_hours']}h delay")
+    if details.get("disruption_type"):
+        bits.append(str(details["disruption_type"]))
+    if details.get("reason"):
+        bits.append(f"cause: {details['reason']}")
+    if details.get("rerouting_offered"):
+        bits.append("re-routed")
+    return " · ".join(bits) if bits else "_no flight details extracted_"
+
+
+def render_agent_trace(steps: list[dict]):
+    """Render the main agent run node-by-node — the "agent steps" panel that scores the
+    "demonstrate agent operation" requirement. Each of the 7 nodes prints what it decided;
+    the `rag` node drills down into the corrective-RAG subgraph (reusing render_rag_trace)."""
+    icons = {
+        "intake": "📥", "router": "🧭", "planner": "🗂️", "rag": "🔎",
+        "eligibility": "⚖️", "calculator": "🧮", "synthesize": "🧩", "fallback": "🚫",
+    }
+    for i, s in enumerate(steps, 1):
+        node = s["node"]
+        head = f"{icons.get(node, '•')} **{i}. {node}**"
+        if node == "intake":
+            st.markdown(f"{head} → classified as `{s['query_type']}`")
+            st.caption(f"flight details: {_flight_summary(s.get('flight_details') or {})}")
+        elif node == "router":
+            st.markdown(f"{head} → route `{s['route']}`")
+        elif node == "planner":
+            st.markdown(f"{head} → decomposed into {len(s['subtasks'])} subtasks")
+            for t in s["subtasks"]:
+                st.caption(f"• {t}")
+        elif node == "rag":
+            st.markdown(
+                f"{head} → retrieved {s['n_docs']} passages, {s['rewrites']} rewrite(s), "
+                f"{s['n_citations']} citation(s)"
+            )
+            if s.get("rag_steps"):
+                with st.expander("corrective-RAG subgraph trace", expanded=False):
+                    render_rag_trace(s["rag_steps"])
+        elif node == "eligibility":
+            verdict = "✅ compensable" if s.get("eligible") else "❌ extraordinary → no cash"
+            st.markdown(f"{head} → {verdict}")
+            st.caption(s.get("rationale", ""))
+        elif node == "calculator":
+            if s.get("error"):
+                st.markdown(f"{head} → ⚠️ {s['error']}")
+            else:
+                st.markdown(
+                    f"{head} → {s['distance_km']:,.0f} km ({s['band']}) → candidate €{s['candidate_eur']}"
+                )
+        elif node == "synthesize":
+            extra = " · gated to €0 (extraordinary)" if s.get("gated") else ""
+            amt = f"€{s['final_eur']}" if s.get("final_eur") is not None else "—"
+            st.markdown(f"{head} → final amount {amt}{extra}")
+        elif node == "fallback":
+            st.markdown(f"{head} → out-of-scope, honest decline")
