@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import config
 from src.llm import get_llm
 from ui_components import (
-    render_agent_trace,
+    render_agent_step,
     render_chunk_card,
     render_citations,
     render_disclaimer,
@@ -326,18 +326,24 @@ def render_agent_tab():
         from src.graph import agent_graph
 
         final = None
-        with st.spinner("Running the agent graph (intake → router → … → synthesize)…"):
+        rendered = 0  # how many trace steps we've already drawn (the trace is append-only)
+        with st.status("Running the agent graph…", expanded=True) as status:
+            # The graph is streamed in `values` mode: each yield is a full state snapshot, so
+            # the append-only `trace` grows step by step. Render each new node as it arrives so
+            # the user watches the agent work live (CLAUDE.md: stream + append to the trace).
             for state in agent_graph.stream({"user_query": question, "trace": []}, stream_mode="values"):
                 final = state
+                trace = state.get("trace", [])
+                for i in range(rendered, len(trace)):
+                    render_agent_step(i + 1, trace[i])
+                rendered = len(trace)
+            status.update(label="Agent run complete", state="complete")
     except Exception as exc:
         st.error(
             f"Could not run the agent: {exc}\n\nIs Ollama running (LLM + `{config.EMBEDDING_MODEL}` "
             "embeddings)? Try `ollama serve`."
         )
         return
-
-    st.markdown("#### Agent trace")
-    render_agent_trace(final.get("trace", []))
 
     st.markdown("#### Answer")
     st.markdown(final.get("final_answer", "_(no answer)_"))
