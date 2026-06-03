@@ -129,3 +129,39 @@ def render_agent_trace(steps: list[dict]):
             st.markdown(f"{head} → final amount {amt}{extra}")
         elif node == "fallback":
             st.markdown(f"{head} → out-of-scope, honest decline")
+
+
+@st.cache_data(show_spinner="Rendering graph diagram…")
+def _graph_png(_graph) -> bytes | None:
+    """PNG bytes for a compiled LangGraph, or None if rendering fails (e.g. offline).
+
+    Rendered server-side via the graph's own ``draw_mermaid_png()`` (no extra Python deps;
+    it posts the Mermaid source to the mermaid.ink API). Cached so the one-off network render
+    happens once — the graph structure is static. The leading-underscore arg is Streamlit's
+    convention for "don't hash this" (the compiled graph is an unhashable singleton)."""
+    try:
+        return _graph.get_graph().draw_mermaid_png()
+    except Exception:
+        return None
+
+
+def render_graph_diagram(graph, *, width: int = 340):
+    """Render a compiled LangGraph as an inline diagram image.
+
+    The diagram is generated from the live compiled graph (``draw_mermaid*()``), so it can
+    never drift from the actual wiring. We render to a PNG server-side and show it with
+    ``st.image`` — deliberately avoiding a client-side JS/iframe render, which Streamlit's
+    component iframe blocks silently. A fixed ``width`` keeps the high-res PNG from blowing up
+    to full page width (the graph is a tall top-down flow, so it stays readable narrow). The
+    raw Mermaid source is offered in an expander as an always-works, offline fallback
+    (pasteable into any Mermaid viewer)."""
+    png = _graph_png(graph)
+    if png:
+        # Center horizontally: st.image has no native centering, so nest it in a middle
+        # column flanked by empty spacers.
+        _, mid, _ = st.columns([1, 2, 1])
+        mid.image(png, width=width)
+    else:
+        st.info("Couldn't render the diagram image (offline?). The Mermaid source is below.")
+    with st.expander("Mermaid source", expanded=False):
+        st.code(graph.get_graph().draw_mermaid(), language="text")

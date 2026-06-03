@@ -18,6 +18,7 @@ from ui_components import (
     render_chunk_card,
     render_citations,
     render_disclaimer,
+    render_graph_diagram,
     render_rag_trace,
 )
 
@@ -291,6 +292,16 @@ def render_agent_tab():
         "eligibility) and the deterministic calculator, and synthesize gates and composes the "
         "answer. Watch every node below."
     )
+
+    with st.expander("📊 Graph structure (the wiring behind the agent)", expanded=False):
+        st.caption(
+            "Generated live from the compiled graph (`agent_graph.get_graph().draw_mermaid()`), "
+            "so it always matches the code. Solid edges are unconditional; dashed edges are "
+            "conditional routes. The `rag` node invokes the corrective-RAG subgraph (not shown)."
+        )
+        from src.graph import agent_graph
+
+        render_graph_diagram(agent_graph)
 
     _, total = _load_corpus_chunks()
     if not total:
