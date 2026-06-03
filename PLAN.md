@@ -44,13 +44,14 @@ The living implementation plan — **what** we're building and **when**, plus cu
 **Note:** 3B generation quality is the limiting factor on answer polish (architecture is sound); calibrate the grader floor + consider a larger model in Phase 5 eval. See DECISIONS `rag-grader`, `embeddings-ollama`, `corpus-2024-guidelines`, `python-314-resolved`.
 **Parked polish:** OJ-notice citation labels for unnumbered dash sub-headings render as `Section · — Strikes by airline staff` (em-dash leaks in; no section number). Tidy later — ideally have dash sub-headings inherit their parent numbered section (`Section 4.3.3 · Strikes by airline staff`); affects `chunk_notice` + a re-ingest (local `data/chroma/` only).
 
-## Phase 3 — Calculator (the non-retrieval tool)  `[ ]`
+## Phase 3 — Calculator (the non-retrieval tool)  `[x]`
 **Goal:** Deterministic compensation tool — the factual backbone and eval ground truth.
-- [ ] `calculate_compensation` as an explicit `@tool` (haversine → band → amount → 3h threshold + 50% rule)
-- [ ] **Eligibility-agnostic:** returns the candidate amount; gate lives in synthesize (see DECISIONS)
-- [ ] Small direct test set (the one classic-test exception): band boundaries (~1500 km), threshold, reduction
-- [ ] **UI gains — Calculator tab:** flight inputs → distance / band / amount, for functional verification
-**Done when:** the test set passes with recomputed-from-real-coords expectations; Calculator tab works.
+- [x] `calculate_compensation` as an explicit `@tool` (`src/tools.py`, thin wrapper over pure `src/calculator.py`: haversine → band → amount → 3h threshold + 50% rule); LLM-free
+- [x] **Eligibility-agnostic:** returns the candidate amount; gate lives in synthesize (see DECISIONS). `threshold_met`/`reduction_applied` are mechanical (distance/delay/rerouting), never the extraordinary-circumstances gate
+- [x] Small direct test set (`tests/test_calculator.py`, the one classic-test exception): band boundaries (BUD→LHR **1489.5 km** just under, LHR→LIS **1563.9 km** just over), 3h threshold, 50%-reduction rule, eval routes, haversine sanity, error handling — **17 passed**
+- [x] **UI gains — Calculator tab:** flight inputs (IATA/delay/type/rerouting) → distance / band / base / threshold / reduction / final amount + readable breakdown + disclaimer
+- [x] Band amounts/thresholds are statutory **module constants** in `src/calculator.py` (not env knobs / not a rules YAML — see DECISIONS); OpenFlights `airports.dat` (ODbL) fetched to `data/`, attributed in `data/SOURCES.md`
+**Done when:** the test set passes with recomputed-from-real-coords expectations; Calculator tab works. ✅ verified — `pytest` 17/17, headless Streamlit boot HTTP 200, `@tool` invoke round-trip.
 
 ## Phase 4 — Agentic assembly (end goal)  `[ ]`
 **Goal:** Put it together into the agentic-RAG graph.
@@ -81,4 +82,5 @@ Append plan-affecting changes here (with a link to the DECISIONS.md entry that e
 
 - 2026-06-03 — Reordered build: UI-as-spine, LLM-first, corpus/RAG → calculator → agentic assembly; dropped Make; functional-testing with a calculator exception. See DECISIONS `build-approach-ui-spine`.
 - 2026-06-03 — Phase 1 built: Python pin 3.12 → **3.14** (only 3.14 available locally; Phase 1 stack has cp314 wheels — risk to re-check at Phase 2 ML deps), model default `qwen2.5:3b-instruct`. See DECISIONS `python-314`, `model-tag`.
+- 2026-06-03 — Phase 3 built. Deterministic calculator: pure logic in **`src/calculator.py`** (haversine + OpenFlights lookup + Art. 7 band table as module constants), thin `@tool` wrapper in `src/tools.py`; **`tests/test_calculator.py`** is the one classic-test exception (17 pass). Band figures kept as statutory constants (not YAML/env — see DECISIONS `calculator-rules-constants`); 50% reduction is flag-driven, long-haul 3–4h auto-50% nuance noted not encoded (DECISIONS `calculator-rules-constants`). OpenFlights `airports.dat` (ODbL) added to gitignored `data/`. Only new dep: `pytest==9.0.3`.
 - 2026-06-03 — Phase 2 built. **Python 3.14 risk retired** — `langgraph` + `chromadb` (and onnxruntime/tokenizers/grpcio) all resolve cp314 wheels, no source builds (DECISIONS `python-314-resolved`). **Embeddings reuse local Ollama `nomic-embed-text`** instead of sentence-transformers/torch — lighter, no new heavy deps (DECISIONS `embeddings-ollama`). **Corpus upgraded:** 2016 → **2024** interpretative guidelines (newer case law), fetched via the Publications Office Cellar API to bypass the EUR-Lex WAF (DECISIONS `corpus-2024-guidelines`). RAG grader is LLM + distance-floor hybrid; 3B answer quality is the open quality item for Phase 5 (DECISIONS `rag-grader`). Deps `langgraph==1.2.4`, `chromadb==1.5.9` added; `PyYAML` dropped.

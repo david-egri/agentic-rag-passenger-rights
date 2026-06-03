@@ -207,6 +207,73 @@ def render_rag_tab():
             render_chunk_card(d, show_distance=True)
 
 
+def render_calculator_tab():
+    """Calculator inspector — exercise the deterministic, LLM-free compensation tool:
+    flight inputs → distance → band → amount, with the threshold/reduction mechanics shown."""
+    st.subheader("Calculator")
+    st.caption(
+        "Runs `calculate_compensation` (`src/calculator.py`) — deterministic, no LLM, no "
+        "retrieval. Great-circle distance (OpenFlights) → Art. 7 band → amount, with the "
+        "3-hour delay threshold and the 50%-reduction rule. Returns the *statutory candidate* "
+        "amount; the extraordinary-circumstances gate is the agent's job (Phase 4)."
+    )
+
+    examples = {
+        "—": ("", "", 4.0, "delay", False),
+        "Budapest → London, delayed 4 h": ("BUD", "LHR", 4.0, "delay", False),
+        "Madrid → New York, cancelled, +7 h": ("MAD", "JFK", 7.0, "cancellation", False),
+        "Frankfurt → Cairo, delayed 5 h": ("FRA", "CAI", 5.0, "delay", False),
+        "Paris → Rome, delayed 2 h (under threshold)": ("CDG", "FCO", 2.0, "delay", False),
+        "Paris → Rome, re-routed within 2 h (50% rule)": ("CDG", "FCO", 1.5, "cancellation", True),
+    }
+    example = st.selectbox("Example (or fill the fields below)", list(examples.keys()))
+    o_def, d_def, delay_def, dtype_def, rr_def = examples[example]
+
+    c1, c2, c3 = st.columns(3)
+    origin = c1.text_input("Origin IATA", value=o_def, max_chars=3).strip().upper()
+    dest = c2.text_input("Destination IATA", value=d_def, max_chars=3).strip().upper()
+    delay = c3.number_input("Arrival delay (hours)", min_value=0.0, value=delay_def, step=0.5)
+
+    c4, c5 = st.columns(2)
+    from src.calculator import DISRUPTION_TYPES
+
+    dtype = c4.selectbox("Disruption type", DISRUPTION_TYPES, index=DISRUPTION_TYPES.index(dtype_def))
+    rerouting = c5.checkbox("Re-routing offered", value=rr_def,
+                            help="Enables the 50% reduction when arrival is within the band's limit.")
+
+    if not st.button("Calculate", type="primary"):
+        return
+    if not origin or not dest:
+        st.warning("Enter both origin and destination IATA codes.")
+        return
+
+    try:
+        from src.calculator import compute_compensation
+
+        r = compute_compensation(origin, dest, delay, dtype, rerouting)
+    except Exception as exc:
+        st.error(f"Could not calculate: {exc}")
+        return
+
+    st.markdown(f"#### {r['origin_name']} → {r['dest_name']}")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Distance", f"{r['distance_km']:,.0f} km")
+    m2.metric("Band", r["band"])
+    m3.metric("Final amount", f"€{r['final_amount_eur']}",
+              delta=None if r["final_amount_eur"] == r["base_amount_eur"]
+              else f"from €{r['base_amount_eur']}")
+
+    g1, g2, g3 = st.columns(3)
+    g1.markdown(f"Base amount: **€{r['base_amount_eur']}**")
+    g2.markdown(f"3 h threshold met: {'✅' if r['threshold_met'] else '❌'}")
+    g3.markdown(f"50% reduction: {'✅ applied' if r['reduction_applied'] else '— not applied'}")
+
+    st.info(r["explanation"])
+    with st.expander("Raw tool output", expanded=False):
+        st.json(r)
+    render_disclaimer()
+
+
 def render_placeholder_tab(name, phase, blurb):
     """Graceful 'not built yet' state for tabs that later phases will fill in."""
     st.subheader(name)
@@ -227,10 +294,7 @@ def main():
     with rag:
         render_rag_tab()
     with calc:
-        render_placeholder_tab(
-            "Calculator", "Phase 3",
-            "Deterministic compensation tool: flight inputs → distance → band → amount.",
-        )
+        render_calculator_tab()
     with agent:
         render_placeholder_tab(
             "Agent", "Phase 4",

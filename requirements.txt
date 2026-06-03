@@ -1,6 +1,8 @@
 # Pinned dependencies. Reproducibility is a non-negotiable (see CLAUDE.md).
 # Phase 1: LLM backend + Streamlit chat spine.
 # Phase 2: corpus + corrective-RAG subgraph (langgraph + chromadb).
+# Phase 3: deterministic calculator (stdlib math + csv only — no new runtime deps;
+#          pytest is the one test dependency for the calculator's direct test set).
 # Embeddings reuse the local Ollama (nomic-embed-text) via langchain-ollama —
 # no torch / sentence-transformers needed (see DECISIONS embeddings-ollama).
 
@@ -9,3 +11,4 @@ langchain-ollama==1.1.0    # ChatOllama + OllamaEmbeddings behind the get_llm() 
 langchain-core==1.4.0      # message types / shared LangChain primitives
 langgraph==1.2.4           # compiled StateGraph for the corrective-RAG subgraph
 chromadb==1.5.9            # persisted vector store at data/chroma/
+pytest==9.0.3              # direct test set for the deterministic calculator
