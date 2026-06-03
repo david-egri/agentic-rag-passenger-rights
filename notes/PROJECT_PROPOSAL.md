@@ -253,13 +253,20 @@ Provide a `DummyLLM` (config flag `LLM_BACKEND=dummy`) returning canned/structur
 
 ## 7. User Interface (Streamlit) — `app/streamlit_app.py`
 
-Must demonstrate (per the brief) **the agent's main steps** and **the RAG result**:
-- **Chat input** + answer pane (final grounded answer with rendered citations).
-- **"Agent steps" panel** — render the `state["trace"]`: which `query_type` the router chose, whether decomposition happened, retrieved chunks (with source/article), the eligibility decision + rationale, and the calculator's `{distance, band, amount}`. Use `st.expander` per step or LangGraph's streamed state.
-- **Citations** shown as source + article references, with the snapshot date.
-- A visible **"general information, not legal advice"** disclaimer.
+**Tabs as the spine.** The UI grows one tab per build phase, so each layer stays independently demonstrable. The first four are **inspector tabs** (dev/demo surfaces); the **Agent** tab is the product that satisfies the brief's UI requirement (**the agent's main steps** + **the RAG result**).
 
-Implementation tip: stream the LangGraph run (`graph.stream`) and append each node's output to the trace panel so the user literally watches the agent work — this is what scores the "demonstrates the agent's operation" point.
+1. **Chat (LLM)** — raw chat with the active backend (ollama/dummy). Sanity-checks the model layer.
+2. **Corpus** — browse the processed corpus: chunks per document, the Article/Recital structure boundaries, per-chunk metadata, and counts. Makes "quality processing" + structure-aware chunking visible.
+3. **RAG** — enter a query and watch the corrective loop: retrieved chunks (scores + metadata) → **grade** decision → **rewritten query** (if any) → **generated** answer with citations. This surfaces the most "agentic" part of the system.
+4. **Calculator** — flight inputs → `{distance, band, amount}`; exercises the deterministic non-retrieval tool.
+5. **Agent** *(the product)* — the full graph via `graph.stream`: render `state["trace"]` (which `query_type` the router chose, whether decomposition happened, retrieved chunks with source/article, the eligibility decision + rationale, the calculator's `{distance, band, amount}`), plus the final grounded answer, **citations** (source + article + snapshot date), and the **"general information, not legal advice"** disclaimer.
+
+Conventions:
+- A persistent **sidebar** (not a tab) shows active backend / model / top-k across all tabs.
+- Build display pieces **once** — chunk card, citation list, trace-step renderer — and reuse them in the RAG and Agent tabs so they can't drift apart.
+- Inspector tabs must handle the **not-built-yet / empty** state gracefully (e.g. corpus not ingested) so a fresh clone doesn't error.
+
+Implementation tip: stream the LangGraph run (`graph.stream`) and append each node's output to the Agent tab's trace so the user literally watches the agent work — this is what scores the "demonstrates the agent's operation" point.
 
 ---
 

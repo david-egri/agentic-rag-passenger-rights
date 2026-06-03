@@ -21,6 +21,16 @@ Format:
 
 <!-- Add entries below, newest first. -->
 
+## 2026-06-03 — Streamlit UI evolves as one-tab-per-layer  (`ui-tabs-per-layer`)
+**[decision]** The UI is a tabbed app that gains a tab each phase: **Chat (LLM)** → **Corpus** → **RAG** → **Calculator** → **Agent**. The first four are inspector/dev-demo tabs; the **Agent** tab is the product and is the one that satisfies the task's UI requirement (agent steps + RAG result).
+**Why:** Keeps every layer independently runnable and demonstrable (great for a live walkthrough and as the functional-test harness), and makes otherwise-invisible scoring criteria visible — the Corpus tab shows "quality processing"/structure-aware chunking; the RAG tab surfaces the corrective grade→rewrite loop (the most "agentic" behaviour). Over-delivers on the deliberately-minimal brief without much cost.
+**How to apply:**
+- Build display components **once** (chunk card, citation list, trace-step renderer) and reuse them in the RAG and Agent tabs so they can't drift.
+- Persistent **sidebar** (not a tab) shows active backend / model / top-k.
+- Inspector tabs handle the **not-built-yet/empty** state gracefully (corpus not ingested, no Chroma) so a fresh clone doesn't error.
+**Revisit if:** tab count or per-tab complexity starts to sprawl — then group inspectors behind a single "Pipeline inspector" tab and keep Agent as the top-level product.
+Related: [[build-approach-ui-spine]].
+
 ## 2026-06-03 — Build approach: Streamlit-as-spine, reordered, no Make, functional-first  (`build-approach-ui-spine`)
 **[decision]** Reworked the build order and process: (1) **Streamlit is the spine** — a minimal chat UI exists from Phase 1 and gains a visualization each phase; (2) **reordered** to LLM backend + chat → corpus + RAG → calculator → agentic assembly → eval + load test → Docker + README; (3) **dropped Make** in favor of plain documented commands; (4) **functional testing** (through the UI + the 15-Q eval) over classical unit tests.
 **Why:** The UI-as-spine keeps every stage runnable and demonstrable, and doubles as the functional-test harness — which is why functional testing through it is sufficient for most of the app. LLM-first de-risks the Ollama/dummy switch immediately and gives something runnable on day one. Make added ceremony without value for a prototype this size. Reordering breaks no acceptance criteria (those constrain the final artifact, not build order).
