@@ -299,7 +299,10 @@ Each item lists the **path it exercises** and the **expected answer / ground tru
 ```
 eu261-agentic-rag/
 ├── README.md                      # problem, architecture + design justification, eval/perf summary, install/run
-├── PROJECT_PROPOSAL.md            # this file
+├── CLAUDE.md                      # Claude Code working agreement (conventions, commands, non-negotiables)
+├── notes/
+│   ├── PROJECT_PROPOSAL.md        # this file — full design rationale
+│   └── TASK_DESCRIPTION.md        # original task brief
 ├── Dockerfile
 ├── docker-compose.yml             # bonus: app + ollama services
 ├── Makefile                       # ingest, run, eval, loadtest, test

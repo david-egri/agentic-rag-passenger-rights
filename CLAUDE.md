@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Operational guide for working on this repo with Claude Code. Read `PROJECT_PROPOSAL.md` for the full design rationale; this file is the short, high-signal working agreement — conventions, commands, and the non-negotiables.
+Operational guide for working on this repo with Claude Code. Read `notes/PROJECT_PROPOSAL.md` for the full design rationale; this file is the short, high-signal working agreement — conventions, commands, and the non-negotiables.
 
 ---
 
@@ -113,4 +113,4 @@ Backend switch: `LLM_BACKEND=ollama` (default) or `LLM_BACKEND=dummy`. Configure
 
 ## Definition of done
 
-See the acceptance checklist at the end of `PROJECT_PROPOSAL.md` (§13). In short: ≥5 nodes with conditional routing, decomposition, typed state, ≥2 tools (≥1 non-retrieval), modular RAG subgraph not counted in the 5, structure-aware corpus processing with citations, local/dummy LLM, Streamlit UI showing agent steps, Dockerfile (+ compose bonus), functional eval (15 Qs) + load test (50–200 queries) with bottleneck analysis, and a complete reproducible README.
+See the acceptance checklist at the end of `notes/PROJECT_PROPOSAL.md` (§13). In short: ≥5 nodes with conditional routing, decomposition, typed state, ≥2 tools (≥1 non-retrieval), modular RAG subgraph not counted in the 5, structure-aware corpus processing with citations, local/dummy LLM, Streamlit UI showing agent steps, Dockerfile (+ compose bonus), functional eval (15 Qs) + load test (50–200 queries) with bottleneck analysis, and a complete reproducible README.
