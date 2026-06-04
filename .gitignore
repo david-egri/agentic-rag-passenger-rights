@@ -2,6 +2,10 @@
 eval/last_run.json
 eval/loadtest_last.json
 
+# OS cruft (macOS Finder metadata, Windows thumbnails)
+.DS_Store
+Thumbs.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
