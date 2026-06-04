@@ -56,6 +56,80 @@ Four kinds of question, four paths:
 
 ---
 
+## Quick start
+
+Get it running first; the design write-up is further down once you've had a play.
+
+**Prerequisites:** Docker (A or B) or Python 3.14 + a local Ollama (C). The two models total ~2.2 GB;
+the first run downloads them and builds the index, both cached afterwards.
+
+Pick one. **On a Mac, use B** — the all-in-Docker model is CPU-only and ~5.5× slower (see
+[Performance](#evaluation--performance)).
+
+### A — All-in-Docker (any OS, fully self-contained)
+
+```bash
+docker compose up --build         # builds the app, pulls the models, ingests the corpus
+open http://localhost:8501
+```
+
+First boot is a few minutes (model pull + a one-time ingest, both cached in named volumes); later boots
+are quick. The app waits for Ollama's healthcheck before starting.
+
+### B — Docker app + host Ollama (Mac fast path, also lightest on disk)
+
+Run Ollama on the host so it uses the GPU, and point the container at it — one env var, no code change:
+
+```bash
+# host: Ollama + the two models
+ollama serve                              # if not already running
+ollama pull qwen2.5:3b-instruct
+ollama pull nomic-embed-text
+
+# app only, aimed at the host
+OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d --build --no-deps app
+open http://localhost:8501
+```
+
+Reuses the host's models, so it skips the Ollama image and the model download.
+(`host.docker.internal` is automatic on Docker Desktop; the compose file maps it via `extra_hosts` for
+native Linux too.)
+
+### C — Local, no Docker
+
+```bash
+python3.14 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+# needs a local Ollama with both models pulled (see B)
+python -m src.ingest                      # parse → chunk → embed → ChromaDB (idempotent)
+streamlit run streamlit_app.py            # http://localhost:8501
+```
+
+### Managing the stack
+
+```bash
+docker compose stop / start               # pause / resume
+docker compose down                       # remove containers, keep volumes (fast restart)
+docker compose down -v                    # also drop volumes (frees ~2.2 GB; re-pull next time)
+```
+
+---
+
+## Using the UI
+
+There's a tab per layer, building up to the **Agent** tab, which is the actual product:
+
+- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
+- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
+- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
+  generate, with citations and the distances of what it retrieved.
+- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
+  amount).
+- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
+  disclaimer. There's a live graph diagram and a set of example queries to try.
+
+---
+
 ## How it works
 
 It's worth being precise about what this is, because it's easy to oversell. In the vocabulary of
@@ -244,88 +318,20 @@ what a local-only stack costs.
 
 ---
 
-## Quick start
-
-**Prerequisites:** Docker (A or B) or Python 3.14 + a local Ollama (C). The two models total ~2.2 GB;
-the first run downloads them and builds the index, both cached afterwards.
-
-Pick one. **On a Mac, use B** — the all-in-Docker model is CPU-only and ~5.5× slower (see
-[Performance](#evaluation--performance)).
-
-### A — All-in-Docker (any OS, fully self-contained)
-
-```bash
-docker compose up --build         # builds the app, pulls the models, ingests the corpus
-open http://localhost:8501
-```
-
-First boot is a few minutes (model pull + a one-time ingest, both cached in named volumes); later boots
-are quick. The app waits for Ollama's healthcheck before starting.
-
-### B — Docker app + host Ollama (Mac fast path, also lightest on disk)
-
-Run Ollama on the host so it uses the GPU, and point the container at it — one env var, no code change:
-
-```bash
-# host: Ollama + the two models
-ollama serve                              # if not already running
-ollama pull qwen2.5:3b-instruct
-ollama pull nomic-embed-text
-
-# app only, aimed at the host
-OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d --build --no-deps app
-open http://localhost:8501
-```
-
-Reuses the host's models, so it skips the Ollama image and the model download.
-(`host.docker.internal` is automatic on Docker Desktop; the compose file maps it via `extra_hosts` for
-native Linux too.)
-
-### C — Local, no Docker
-
-```bash
-python3.14 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-# needs a local Ollama with both models pulled (see B)
-python -m src.ingest                      # parse → chunk → embed → ChromaDB (idempotent)
-streamlit run streamlit_app.py            # http://localhost:8501
-```
-
-### Eval, tests, and stack management
-
-```bash
-python -m eval.functional_eval            # 15-question functional eval
-python -m eval.loadtest                   # load test (N=50) + per-node timing
-pytest tests/test_calculator.py           # the deterministic calculator's unit tests
-
-docker compose stop / start               # pause / resume
-docker compose down                       # remove containers, keep volumes (fast restart)
-docker compose down -v                    # also drop volumes (frees ~2.2 GB; re-pull next time)
-```
-
----
-
-## Using the UI
-
-There's a tab per layer, building up to the **Agent** tab, which is the actual product:
-
-- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
-- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
-- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
-  generate, with citations and the distances of what it retrieved.
-- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
-  amount).
-- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
-  disclaimer. There's a live graph diagram and a set of example queries to try.
-
----
-
 ## Evaluation & performance
 
 The short version is below; full methodology and numbers are in
 [`notes/PHASE6_EVAL_RESULTS.md`](notes/PHASE6_EVAL_RESULTS.md). Ground truth is pinned to what
 Reg. 261/2004 *actually says* (every route distance recomputed from real coordinates before fixing the
 expected amount), not to whatever the model happens to output.
+
+Run it yourself:
+
+```bash
+python -m eval.functional_eval            # the 15-question functional eval
+python -m eval.loadtest                   # the load test (N=50) + per-node timing
+pytest tests/test_calculator.py           # the deterministic calculator's unit tests
+```
 
 ### Is it correct? (15-question functional eval, `qwen2.5:3b-instruct`, temperature 0)
 
