@@ -12,3 +12,5 @@ langchain-core==1.4.0      # message types / shared LangChain primitives
 langgraph==1.2.4           # compiled StateGraph for the corrective-RAG subgraph
 chromadb==1.5.9            # persisted vector store at data/chroma/
 pytest==9.0.3              # direct test set for the deterministic calculator
+# Phase 6: functional eval + load test.
+PyYAML==6.0.3              # parse eval/eval_set.yaml (was transitive; pinned for the eval)

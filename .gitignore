@@ -1,3 +1,7 @@
+# Phase 6 eval/load-test run artifacts (derived; results are recorded in notes/PHASE6_EVAL_RESULTS.md)
+eval/last_run.json
+eval/loadtest_last.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

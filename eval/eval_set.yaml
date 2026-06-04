@@ -1,0 +1,225 @@
+# Functional eval set — 15 questions with ground truth (Phase 6).
+#
+# Ground-truth philosophy (see notes/EVAL_CITATION_SCORING.md + PHASE5 findings):
+#   - routing / eligibility / amount are anchored to **Reg. (EC) 261/2004 correctness**,
+#     NOT to current graph output — so they survive the future corpus/code review phase.
+#   - amounts are the GATED final figure (synthesize's `final_eur`: candidate after the
+#     eligibility gate AND the 3-hour threshold). Every route distance was recomputed from
+#     real OpenFlights coords before pinning (CLAUDE.md gotcha) — see the verification run
+#     in DECISIONS `phase-6-eval-set`.
+#   - citation `present` is a guardrail check (non-neg #3); `any_of` is correctness, pinned
+#     against the CURRENT 4-doc corpus and matched on normalized source + article/section
+#     (set-membership / recall — over-citing extra valid articles is fine, missing all
+#     required ones fails). This is the slice that will be re-pinned after the corpus pass.
+#
+# `known_fail` documents the two 3B limitations surfaced in Phase 5 spot-checks
+# (DECISIONS `spot-check-misroutes`). Those cases are scored like any other, but the runner
+# reports them separately so the baseline distinguishes "known gap" from "new regression".
+#
+# Schema per case:
+#   id, category, query
+#   expect:
+#     query_type: rights_info | compensation_calc | mixed | out_of_scope
+#     eligible:   true/false            # optional — only where an eligibility verdict applies
+#     amount_eur: <int>                 # optional — gated final amount (omit for non-calc)
+#     citations:
+#       required: true/false            # presence scored only when true (calc-only/oos exempt)
+#       any_of: [{source, article}]     # optional correctness; article optional & label-tolerant
+#   known_fail:                         # optional
+#     dimensions: [routing|eligibility|amount]
+#     ref: <grep tag>
+#     note: <why it currently fails>
+
+# ─────────────────────────────────────────── rights_info (4) ───────────────────────────────
+- id: cancel-refund
+  category: rights_info
+  query: "Can I get a refund if my flight is cancelled?"
+  expect:
+    query_type: rights_info
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 8" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 5" }
+        - { source: "EUR-Lex Summary (261/2004)" }
+        - { source: "Commission Guidelines (2024)" }
+
+- id: delay-care
+  category: rights_info
+  query: "My flight is delayed by 5 hours. Am I entitled to meals and a hotel?"
+  expect:
+    query_type: rights_info
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 9" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 6" }
+        - { source: "Commission Guidelines (2024)" }
+
+- id: denied-boarding-rights
+  category: rights_info
+  query: "What are my rights if I'm denied boarding because the flight was overbooked?"
+  expect:
+    query_type: rights_info
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 4" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 7" }
+        - { source: "EUR-Lex Summary (261/2004)" }
+        - { source: "Commission Guidelines (2024)" }
+
+- id: scope-asymmetry
+  category: rights_info
+  query: "Am I covered by EU air passenger rights flying from New York to Paris on a US airline?"
+  expect:
+    query_type: rights_info        # a coverage/scope question IS in scope (Art. 3)
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 3" }
+        - { source: "EUR-Lex Summary (261/2004)" }
+  known_fail:
+    dimensions: [routing]
+    ref: SCOPE-ASYMMETRY-MISROUTE
+    note: >
+      3B intake reads "New York / US airline" as off-topic and classifies out_of_scope →
+      fallback, so the asymmetric-scope question never reaches RAG. Correct answer: NOT
+      covered (non-EU→EU on a non-EU carrier). See DECISIONS spot-check-misroutes.
+
+# ─────────────────────────────────────── compensation_calc (5) ─────────────────────────────
+- id: delay-short-haul-250
+  category: compensation_calc
+  query: "My flight from Budapest (BUD) to London (LHR) was delayed 4 hours. How much compensation am I owed?"
+  expect:
+    query_type: compensation_calc
+    eligible: true                 # no cause stated → owed in principle (Art. 5(3) default)
+    amount_eur: 250                # 1489.5 km → ≤1500 band, 4h ≥ 3h threshold
+    citations:
+      required: false
+
+- id: delay-medium-400
+  category: compensation_calc
+  query: "Flight from London (LHR) to Lisbon (LIS) delayed 3 hours — what compensation?"
+  expect:
+    query_type: compensation_calc
+    eligible: true
+    amount_eur: 400                # 1563.9 km → 1500–3500 band, 3h meets threshold
+    citations:
+      required: false
+
+- id: delay-long-haul-600
+  category: compensation_calc
+  query: "My Paris (CDG) to New York (JFK) flight was delayed 4 hours. How much am I entitled to?"
+  expect:
+    query_type: compensation_calc
+    eligible: true
+    amount_eur: 600                # 5833.6 km → >3500 band
+    citations:
+      required: false
+
+- id: delay-under-threshold
+  category: compensation_calc
+  query: "My Frankfurt (FRA) to Cairo (CAI) flight arrived 1 hour late. What compensation do I get?"
+  expect:
+    query_type: compensation_calc
+    eligible: true                 # eligible in principle, but…
+    amount_eur: 0                  # 1h < 3h threshold → €0 (care may still apply)
+    citations:
+      required: false
+  # finding #6 — delay-only under the 3-hour threshold must zero out.
+
+- id: cancellation-amount
+  category: compensation_calc
+  query: "My flight from Paris (CDG) to Rome (FCO) was cancelled. How much compensation am I owed?"
+  expect:
+    query_type: compensation_calc
+    eligible: true
+    amount_eur: 250                # 1100.7 km → ≤1500 band; cancellation meets threshold regardless of delay
+    citations:
+      required: false
+  # finding #6 — cancellation path (threshold_met=True independent of delay_hours).
+
+# ─────────────────────────────────────────────── mixed (3) ─────────────────────────────────
+- id: mixed-own-strike
+  category: mixed
+  query: >
+    My flight from Madrid (MAD) to Rome (FCO) was delayed 4 hours because of a strike by the
+    airline's own cabin crew. Am I entitled to compensation, and how much?
+  expect:
+    query_type: mixed
+    eligible: true                 # airline's OWN staff strike = within control → compensable
+    amount_eur: 250                # 1329.6 km → ≤1500 band
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 7" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 5" }
+        - { source: "Commission Guidelines (2024)" }
+
+- id: mixed-weather-gated
+  category: mixed
+  query: >
+    My flight from Madrid (MAD) to New York (JFK) was cancelled because of a snowstorm. What
+    are my rights and how much compensation will I get?
+  expect:
+    query_type: mixed
+    eligible: false                # snowstorm = extraordinary circumstance → no cash compensation
+    amount_eur: 0                  # candidate €600 gated to €0 (care/re-routing still apply)
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 5" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 9" }
+        - { source: "Commission Guidelines (2024)" }
+
+- id: mixed-atc-restrictions
+  category: mixed
+  query: >
+    My flight from Frankfurt (FRA) to London (LHR) was delayed 4 hours due to air traffic
+    control restrictions. How much compensation am I owed?
+  expect:
+    query_type: mixed
+    eligible: false                # ATC restrictions = extraordinary (beyond carrier control) → €0
+    amount_eur: 0                  # candidate €250 should gate to €0
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 5" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 7" }
+        - { source: "Commission Guidelines (2024)" }
+  known_fail:
+    dimensions: [eligibility, amount]
+    ref: ATC-NOT-EXTRAORDINARY
+    note: >
+      3B eligibility node returns eligible=True for ATC restrictions → €250 instead of gating
+      to €0. ATC is an extraordinary circumstance (CLAUDE.md gotcha). The control-test prompt
+      covers weather/strikes but misses ATC. See DECISIONS spot-check-misroutes.
+
+# ──────────────────────────────────────────── out_of_scope (2) ─────────────────────────────
+- id: oos-baggage-fees
+  category: out_of_scope
+  query: "How much does the airline charge for an extra checked bag?"
+  expect:
+    query_type: out_of_scope       # baggage pricing is outside Reg. 261/2004
+    citations:
+      required: false
+
+- id: oos-pets-cabin
+  category: out_of_scope
+  query: "Can I bring my dog with me in the cabin on the flight?"
+  expect:
+    query_type: out_of_scope       # pets in cabin is outside Reg. 261/2004
+    citations:
+      required: false
+
+# ────────────────────────────────── compensation_calc — denied boarding (1) ────────────────
+- id: denied-boarding-amount
+  category: compensation_calc
+  query: "I was bumped off my Budapest (BUD) to London (LHR) flight due to overbooking. How much compensation?"
+  expect:
+    query_type: compensation_calc
+    eligible: true                 # denied boarding for overbooking = compensable
+    amount_eur: 250                # 1489.5 km → ≤1500 band; denied_boarding meets threshold
+    citations:
+      required: false
