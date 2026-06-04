@@ -14,10 +14,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import config
 from src.llm import get_llm
 from ui_components import (
-    render_agent_trace,
+    render_agent_step,
     render_chunk_card,
     render_citations,
     render_disclaimer,
+    render_graph_diagram,
     render_rag_trace,
 )
 
@@ -292,21 +293,45 @@ def render_agent_tab():
         "answer. Watch every node below."
     )
 
+    with st.expander("📊 Graph structure (the wiring behind the agent)", expanded=False):
+        st.caption(
+            "Generated live from the compiled graph (`agent_graph.get_graph().draw_mermaid()`), "
+            "so it always matches the code. Solid edges are unconditional; dashed edges are "
+            "conditional routes. The `rag` node invokes the corrective-RAG subgraph (not shown)."
+        )
+        from src.graph import agent_graph
+
+        render_graph_diagram(agent_graph)
+
     _, total = _load_corpus_chunks()
     if not total:
         st.info("**Corpus not ingested yet.** Run `python -m src.ingest` first (the agent needs retrieval).")
         return
 
+    # Curated to walk every direction of the graph + the key sub-behaviours. Each was run
+    # through agent_graph to confirm it routes/computes as intended (the 3B classifier is
+    # fickle — several plausible questions misrouted and were dropped). Grouped by path:
     examples = [
+        # rights_info → rag → synthesize
         "What are my rights if my flight is cancelled?",
-        "My flight from Budapest to London was delayed 4 hours. How much compensation do I get?",
-        "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",
-        "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",
+        "What assistance must an airline provide during a long delay?",
+        # compensation_calc → calculator ‖ rag→eligibility → synthesize (distance bands, threshold, reduction, denied boarding)
+        "My flight from Budapest to London was delayed 4 hours. How much compensation do I get?",          # short-haul → €250
+        "My Athens to London flight was delayed 4 hours — what compensation am I owed?",                    # medium-haul → €400
+        "My Frankfurt to Bangkok flight arrived 5 hours late. How much am I entitled to?",                  # long-haul → €600
+        "My Paris to Amsterdam flight was delayed 2 hours — am I owed compensation?",                       # under the 3 h threshold → €0
+        "I was denied boarding on my Vienna to London flight because it was overbooked. How much can I claim?",  # denied boarding → €250
+        "My Lisbon to Paris flight was cancelled, but I was rerouted and arrived only 2 hours late. What compensation applies?",  # 50% reduction → €125
+        # mixed → planner → calculator ‖ rag→eligibility → synthesize (eligibility gate)
+        "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",  # own-staff strike = compensable → €250
+        "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",  # weather = extraordinary → €0
+        # out_of_scope → fallback (hallucination firewall)
         "How much does it cost to bring a dog on the flight?",
+        "Does EU passenger rights law cover my lost or damaged luggage?",
     ]
     example = st.selectbox("Example question (or type your own below)", ["—"] + examples)
     default = "" if example == "—" else example
-    question = st.text_input("Your question", value=default, key="agent_q")
+    question = st.text_input("Your question", value=default)
 
     if not st.button("Run agent", type="primary") or not question.strip():
         return
@@ -314,19 +339,32 @@ def render_agent_tab():
     try:
         from src.graph import agent_graph
 
+        # The graph is streamed in `values` mode: each yield is a full state snapshot. We mine
+        # two live views from it, each in its own collapsible st.status block (stacked): the
+        # formatted node-by-node trace (appended), and the raw evolving AgentState (st.json,
+        # overwritten each step). Both created up front so they keep their position on top.
+        status = st.status("Running the agent graph…", expanded=True)
+        state_status = st.status("Live `AgentState` (raw)", expanded=False)
+        state_status.caption("Raw state, minus `trace` and `retrieved_docs` (shown in the trace above / passages below)")
+        state_box = state_status.empty()  # placeholder inside the state block, overwritten each step
         final = None
-        with st.spinner("Running the agent graph (intake → router → … → synthesize)…"):
-            for state in agent_graph.stream({"user_query": question, "trace": []}, stream_mode="values"):
-                final = state
+        rendered = 0  # how many trace steps we've already drawn (the trace is append-only)
+        for state in agent_graph.stream({"user_query": question, "trace": []}, stream_mode="values"):
+            final = state
+            trace = state.get("trace", [])
+            with status:  # re-enter to append the new step(s) into the trace panel
+                for i in range(rendered, len(trace)):
+                    render_agent_step(i + 1, trace[i])
+            rendered = len(trace)
+            state_box.json({k: v for k, v in state.items() if k not in ("trace", "retrieved_docs")})
+        status.update(label="Agent run complete", state="complete")
+        state_status.update(label="Final `AgentState` (raw)", state="complete")
     except Exception as exc:
         st.error(
             f"Could not run the agent: {exc}\n\nIs Ollama running (LLM + `{config.EMBEDDING_MODEL}` "
             "embeddings)? Try `ollama serve`."
         )
         return
-
-    st.markdown("#### Agent trace")
-    render_agent_trace(final.get("trace", []))
 
     st.markdown("#### Answer")
     st.markdown(final.get("final_answer", "_(no answer)_"))

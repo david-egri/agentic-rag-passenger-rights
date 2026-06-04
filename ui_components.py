@@ -84,48 +84,92 @@ def _flight_summary(details: dict) -> str:
     return " · ".join(bits) if bits else "_no flight details extracted_"
 
 
+_AGENT_NODE_ICONS = {
+    "intake": "📥", "router": "🧭", "planner": "🗂️", "rag": "🔎",
+    "eligibility": "⚖️", "calculator": "🧮", "synthesize": "🧩", "fallback": "🚫",
+}
+
+
 def render_agent_trace(steps: list[dict]):
     """Render the main agent run node-by-node — the "agent steps" panel that scores the
     "demonstrate agent operation" requirement. Each of the 7 nodes prints what it decided;
     the `rag` node drills down into the corrective-RAG subgraph (reusing render_rag_trace)."""
-    icons = {
-        "intake": "📥", "router": "🧭", "planner": "🗂️", "rag": "🔎",
-        "eligibility": "⚖️", "calculator": "🧮", "synthesize": "🧩", "fallback": "🚫",
-    }
     for i, s in enumerate(steps, 1):
-        node = s["node"]
-        head = f"{icons.get(node, '•')} **{i}. {node}**"
-        if node == "intake":
-            st.markdown(f"{head} → classified as `{s['query_type']}`")
-            st.caption(f"flight details: {_flight_summary(s.get('flight_details') or {})}")
-        elif node == "router":
-            st.markdown(f"{head} → route `{s['route']}`")
-        elif node == "planner":
-            st.markdown(f"{head} → decomposed into {len(s['subtasks'])} subtasks")
-            for t in s["subtasks"]:
-                st.caption(f"• {t}")
-        elif node == "rag":
+        render_agent_step(i, s)
+
+
+def render_agent_step(i: int, s: dict):
+    """Render one node's trace entry. Split out from render_agent_trace so the Agent tab can
+    render steps incrementally as the graph streams them (live "watch the agent work")."""
+    node = s["node"]
+    head = f"{_AGENT_NODE_ICONS.get(node, '•')} **{i}. {node}**"
+    if node == "intake":
+        st.markdown(f"{head} → classified as `{s['query_type']}`")
+        st.caption(f"flight details: {_flight_summary(s.get('flight_details') or {})}")
+    elif node == "router":
+        st.markdown(f"{head} → route `{s['route']}`")
+    elif node == "planner":
+        st.markdown(f"{head} → decomposed into {len(s['subtasks'])} subtasks")
+        for t in s["subtasks"]:
+            st.caption(f"• {t}")
+    elif node == "rag":
+        st.markdown(
+            f"{head} → retrieved {s['n_docs']} passages, {s['rewrites']} rewrite(s), "
+            f"{s['n_citations']} citation(s)"
+        )
+        if s.get("rag_steps"):
+            with st.expander("corrective-RAG subgraph trace", expanded=False):
+                render_rag_trace(s["rag_steps"])
+    elif node == "eligibility":
+        verdict = "✅ compensable" if s.get("eligible") else "❌ extraordinary → no cash"
+        st.markdown(f"{head} → {verdict}")
+        st.caption(s.get("rationale", ""))
+    elif node == "calculator":
+        if s.get("error"):
+            st.markdown(f"{head} → ⚠️ {s['error']}")
+        else:
             st.markdown(
-                f"{head} → retrieved {s['n_docs']} passages, {s['rewrites']} rewrite(s), "
-                f"{s['n_citations']} citation(s)"
+                f"{head} → {s['distance_km']:,.0f} km ({s['band']}) → candidate €{s['candidate_eur']}"
             )
-            if s.get("rag_steps"):
-                with st.expander("corrective-RAG subgraph trace", expanded=False):
-                    render_rag_trace(s["rag_steps"])
-        elif node == "eligibility":
-            verdict = "✅ compensable" if s.get("eligible") else "❌ extraordinary → no cash"
-            st.markdown(f"{head} → {verdict}")
-            st.caption(s.get("rationale", ""))
-        elif node == "calculator":
-            if s.get("error"):
-                st.markdown(f"{head} → ⚠️ {s['error']}")
-            else:
-                st.markdown(
-                    f"{head} → {s['distance_km']:,.0f} km ({s['band']}) → candidate €{s['candidate_eur']}"
-                )
-        elif node == "synthesize":
-            extra = " · gated to €0 (extraordinary)" if s.get("gated") else ""
-            amt = f"€{s['final_eur']}" if s.get("final_eur") is not None else "—"
-            st.markdown(f"{head} → final amount {amt}{extra}")
-        elif node == "fallback":
-            st.markdown(f"{head} → out-of-scope, honest decline")
+    elif node == "synthesize":
+        extra = " · gated to €0 (extraordinary)" if s.get("gated") else ""
+        amt = f"€{s['final_eur']}" if s.get("final_eur") is not None else "—"
+        st.markdown(f"{head} → final amount {amt}{extra}")
+    elif node == "fallback":
+        st.markdown(f"{head} → out-of-scope, honest decline")
+
+
+@st.cache_data(show_spinner="Rendering graph diagram…")
+def _mermaid_png(mermaid_src: str) -> bytes | None:
+    """PNG bytes for a Mermaid source string, or None if rendering fails (e.g. offline).
+
+    Rendered server-side via LangGraph's own helper (no extra Python deps; it posts the
+    Mermaid source to the mermaid.ink API). Cached on the source string so the one-off
+    network render happens once — the graph structure is static."""
+    try:
+        from langchain_core.runnables.graph_mermaid import draw_mermaid_png
+
+        return draw_mermaid_png(mermaid_src)
+    except Exception:
+        return None
+
+
+def render_graph_diagram(graph, *, direction: str = "LR"):
+    """Render a compiled LangGraph as an inline diagram image.
+
+    The diagram is generated from the live compiled graph (``draw_mermaid()``), so it can
+    never drift from the actual wiring. We flip the default top-down flow to left-to-right
+    (``direction="LR"``) — wide-but-short, which keeps the node text legible without a tall
+    image — then render to a PNG server-side and show it stretched to the container width.
+    (Client-side JS/iframe rendering is avoided: Streamlit's component iframe blocks it
+    silently.) The raw Mermaid source is offered in an expander as an offline fallback."""
+    src = graph.get_graph().draw_mermaid()
+    if direction == "LR":
+        src = src.replace("graph TD;", "graph LR;", 1)
+    png = _mermaid_png(src)
+    if png:
+        st.image(png, width="stretch")
+    else:
+        st.info("Couldn't render the diagram image (offline?). The Mermaid source is below.")
+    with st.expander("Mermaid source", expanded=False):
+        st.code(src, language="text")
