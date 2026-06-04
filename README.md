@@ -156,8 +156,10 @@ OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d --build --no-d
 ```
 
 This is also the **lightest** path on disk — it reuses the host's models, so it skips the
-~1.5 GB Ollama image and the ~2.2 GB model download. *(`host.docker.internal` is a Docker Desktop
-feature; on native Linux add `extra_hosts: ["host.docker.internal:host-gateway"]`.)*
+~1.5 GB Ollama image and the ~2.2 GB model download. *(`host.docker.internal` is auto-provided by
+Docker Desktop; for native Linux the compose file already maps it via
+`extra_hosts: ["host.docker.internal:host-gateway"]`, so this path works cross-platform out of the
+box.)*
 
 ### Option C — Local, no Docker (dev)
 
