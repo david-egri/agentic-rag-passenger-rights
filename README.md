@@ -72,17 +72,11 @@ run as independent branches and rejoin at the end). The part that's genuinely *a
 corrective-RAG loop grades its own retrieval and rewrites the query when it came back weak — an
 evaluator-optimizer loop that reacts to its own output instead of following a fixed path.
 
-Concretely it's **two LangGraph graphs sharing one typed state object**: a main graph that runs the
-overall flow, and a RAG subgraph it calls for retrieval.
-
-### The shared state (`src/state.py`)
-
-Every node reads from and writes to a single typed `AgentState`. It carries the question and its type,
-the extracted flight details, the retrieved documents, the rights answer, the eligibility verdict, the
-calculated amount, the final answer — and a `trace`. The trace is append-only (each node adds its own
-entry) and it's what the UI streams, so you can watch a run unfold node by node. Keeping every
-intermediate result in one typed object is what lets the parallel branches hand off cleanly and lets the
-UI show its work.
+Concretely it's **two LangGraph graphs, each with its own typed state**: a main graph that runs the
+overall flow, and a separate RAG subgraph it calls for retrieval. They don't share a state object — the
+main graph hands the subgraph a query and maps the result back at the boundary (the standard LangGraph
+pattern for a subgraph with a different schema). Each graph is below, followed by the state object it
+carries.
 
 ### The main graph (`src/graph.py`) — 7 nodes
 
@@ -138,6 +132,31 @@ independently" made literal rather than just claimed. Because the branches are d
 `synthesize` is a *deferred* node, so LangGraph waits for both sides and joins them exactly once instead
 of firing twice.
 
+The nodes don't pass arguments to each other — they read from and write to one shared, typed object,
+`AgentState`. Each node returns a partial dict that LangGraph merges in:
+
+```python
+class AgentState(TypedDict, total=False):
+    user_query: str             # the raw question
+    query_type: QueryType       # intake's label: rights_info | compensation_calc | mixed | out_of_scope
+    flight_details: dict        # origin/dest IATA, delay_hours, disruption_type, reason, rerouting_offered
+    subtasks: list[str]         # planner's split of a mixed query
+    retrieved_docs: list[dict]  # RAG chunks (text + metadata + distance) — also feeds eligibility
+    rag_answer: str             # grounded rights answer from the subgraph
+    rag_citations: list[dict]   # [{source, article, url}] backing rag_answer
+    eligibility: dict           # {eligible: bool, rationale: str}
+    calc_result: dict           # calculator output (distance_km, band, amounts, …)
+    final_answer: str           # the composed answer shown to the user
+    trace: Annotated[list, operator.add]  # per-node log, append-only
+```
+
+Two things to note. The fields fill in *as the run progresses* — `intake` writes `query_type` and
+`flight_details`, the branches write `rag_answer` / `calc_result` / `eligibility`, `synthesize` writes
+`final_answer` — so a glance at the state tells you how far a query got. And `trace` is special: it uses
+an append-only reducer (`operator.add`) instead of being overwritten, so every node — including both
+parallel branches — *adds* its own entry. That append-only log is exactly what the UI streams to show
+the run node by node.
+
 ### The RAG subgraph (`src/rag.py`)
 
 Retrieval is its own compiled graph, attached to the main graph as a single `rag` node and shared by
@@ -156,6 +175,26 @@ bit that most resembles an agent: the loop reacts to its own output instead of r
 The grader is a hybrid (the model judges relevance, with a cosine-distance floor as a safety net so a
 confidently-wrong model can't wave junk through), and `generate` is told to answer *only* from what was
 retrieved — no outside knowledge, no invented figures.
+
+The subgraph carries its own, smaller state — just the retrieval loop's working set, with no idea the
+larger agent exists:
+
+```python
+class RAGState(TypedDict, total=False):
+    question: str               # the original question (never mutated)
+    query: str                  # current search query (rewritten on a retry)
+    documents: list[dict]       # retrieved chunks (text + metadata + distance)
+    relevant: bool              # the grader's verdict on the current documents
+    rewrites: int               # how many rewrites have happened (bounded)
+    answer: str                 # the grounded answer
+    citations: list[dict]       # [{source, article, url}] backing the answer
+    steps: Annotated[list, operator.add]  # the loop's own trace, append-only
+```
+
+The split between `question` and `query` is what makes the rewrite loop work: the original question is
+kept fixed while `query` is the thing that gets rephrased and re-retrieved, bounded by `rewrites`. When
+the loop finishes, the main graph's `rag` node copies just `documents`, `answer`, and `citations` back
+into `AgentState` — the boundary mapping that keeps this subgraph independently testable and reusable.
 
 ### The two tools (`src/tools.py`)
 
