@@ -12,32 +12,30 @@ No paid APIs, no data leaving the box. The whole thing comes up with one command
 
 ---
 
-## The problem, and why an agent
+## The problem
 
 If your flight is cancelled or badly delayed inside the EU, the law (Regulation 261/2004) says you may
-be owed up to €600. In practice almost nobody claims it. The rules are real but fiddly: the amount
-depends on how far you were flying and how late you arrived, and whether you get *anything* depends on
-whether the disruption was the airline's fault or an "extraordinary circumstance" like weather. Most
-people don't know the thresholds, and the airlines aren't in a hurry to volunteer them. So there's a
-genuine, everyday user need: *tell me, in plain terms, what I'm owed and why.*
+be owed up to €600 — and almost nobody claims it. The rules are real but fiddly: the amount depends on
+how far you were flying and how late you arrived, and whether you get *anything* depends on whether the
+disruption was the airline's fault or an "extraordinary circumstance" like weather. Most people don't
+know the thresholds, and airlines aren't in a hurry to volunteer them. So there's a genuine, everyday
+need: *tell me, in plain terms, what I'm owed and why.*
 
-That need is awkward for a plain RAG chatbot, and the reason is worth spelling out, because it's the
-whole justification for the agentic design:
+That need is a poor fit for a plain chatbot, for three reasons that end up shaping the whole design:
 
 - **Half the question is law, half is arithmetic.** "My Budapest–London flight was cancelled, how much
-  do I get?" needs a *grounded* legal answer (was this even compensable?) **and** an *exact* number
-  (which band, what threshold). A language model is good at the first and unreliable at the second —
-  ask a 3B model to multiply distances and apply a €400/€600 cutoff and it will occasionally make the
+  do I get?" needs a *grounded* legal answer (is this even compensable?) **and** an *exact* number
+  (which band, which threshold). A language model is good at the first and shaky at the second — ask a
+  small model to apply distance bands and a €400/€600 cutoff and it will occasionally just make the
   number up. So the money has to come from real code, not the model.
-- **The two halves need different machinery.** Looking up the law wants retrieval; computing the
-  amount wants a deterministic function. One prompt can't cleanly be both.
-- **Some questions are traps.** "Can I bring my dog?" or "why are fares so high?" aren't covered by
-  this regulation at all. A naive chatbot answers anyway. We want it to *notice* it's out of scope and
-  refuse, rather than invent a plausible-sounding rule.
+- **Looking things up has to be honest.** Answers about your rights should come from the actual
+  regulation, with a citation — not from the model's memory, which you can't audit.
+- **Some questions are out of scope.** "Can I bring my dog?" or "why are fares so high?" aren't covered
+  by this regulation. A naive chatbot answers anyway; this one should notice and decline.
 
-An agent earns its keep here because the job is naturally a little workflow: figure out what's being
-asked, send the legal part to retrieval and the money part to a calculator, run those independently,
-then merge them into one grounded answer with the right caveats. That's what the graph below does.
+So the model needs help: retrieval to stay grounded, a calculator to get the number right, and some
+structure to keep it in its lane. That combination — an LLM given tools and retrieval — is the core of
+what's built here.
 
 ---
 
@@ -60,11 +58,31 @@ Four kinds of question, four paths:
 
 ## How it works
 
-It's a **directed agent**: the graph fixes the control flow, so the path a question takes is
-predictable and testable. That's a deliberate trade-off — I gave up the open-endedness of a
-"model freely picks tools" agent in exchange for something I can actually evaluate and reason about.
-The one genuinely self-correcting part is the RAG loop, which grades its own retrieval and retries if
-it came back weak.
+It's worth being precise about what this is, because it's easy to oversell. In the vocabulary of
+Anthropic's [*Building Effective Agents*](https://www.anthropic.com/engineering/building-effective-agents),
+this is a **workflow**, not an autonomous agent: an **augmented LLM** — a model given retrieval and a
+calculator — orchestrated through predefined code paths, rather than a model that decides its own next
+move. That's deliberate. The task has a known, fixed shape (work out what's being asked → look up the
+law and/or compute the amount → merge them), so a fixed graph is more predictable and far easier to
+evaluate than letting a 3B model free-wheel.
+
+Two standard workflow patterns from that article show up directly: **routing** (a node classifies each
+question and sends it down the right path) and **parallelization** (the legal lookup and the calculation
+run as independent branches and rejoin at the end). The part that's genuinely *agentic* is narrower: the
+corrective-RAG loop grades its own retrieval and rewrites the query when it came back weak — an
+evaluator-optimizer loop that reacts to its own output instead of following a fixed path.
+
+Concretely it's **two LangGraph graphs sharing one typed state object**: a main graph that runs the
+overall flow, and a RAG subgraph it calls for retrieval.
+
+### The shared state (`src/state.py`)
+
+Every node reads from and writes to a single typed `AgentState`. It carries the question and its type,
+the extracted flight details, the retrieved documents, the rights answer, the eligibility verdict, the
+calculated amount, the final answer — and a `trace`. The trace is append-only (each node adds its own
+entry) and it's what the UI streams, so you can watch a run unfold node by node. Keeping every
+intermediate result in one typed object is what lets the parallel branches hand off cleanly and lets the
+UI show its work.
 
 ### The main graph (`src/graph.py`) — 7 nodes
 
@@ -97,34 +115,33 @@ it came back weak.
 
 Reading it node by node:
 
-- **`intake`** is the front door. It reads the question, pulls out any flight details (airports, how
-  late, what went wrong), and decides what *kind* of question it is.
-- **`router`** is a real node, not just a branching edge. It writes its decision into the shared state
-  before the graph branches — which means the trace panel in the UI shows you *why* it went the way it
-  did, not just where it ended up.
-- **`planner`** only fires for the "both at once" case. It splits the question into the two real
+- **`intake`** is the front door: it reads the question, pulls out any flight details (airports, how
+  late, what went wrong), and classifies what kind of question it is.
+- **`router`** decides which of the four paths the question takes and writes that choice into the state,
+  so the routing decision is visible in the trace.
+- **`planner`** only fires for "both at once" questions — it splits the question into its two real
   subtasks (look up the right, compute the amount) so they can run independently.
-- **`eligibility`** is the one judgement call in the system: was this disruption the airline's
-  responsibility? Its own staff striking — yes, that's on them, you get paid. Weather or air-traffic
-  control — extraordinary, no compensation (though you may still be owed care or rerouting).
-- **`calculator`** calls the money tool. No model involved (more on why below).
-- **`synthesize`** merges everything and applies the gate: if it wasn't eligible, the amount becomes
-  €0 no matter what the calculator said. This step is **plain code on purpose** — by the time we reach
-  it, every piece is already grounded, so running another model pass here would only add latency and a
-  fresh chance to hallucinate.
-- **`fallback`** handles the off-topic questions — the hallucination firewall.
+- **`eligibility`** is the one judgement call: was this disruption the airline's responsibility? Its own
+  staff striking — yes, you're owed compensation. Weather or air-traffic control — extraordinary, so no
+  compensation (though care or rerouting may still apply).
+- **`calculator`** calls the money tool. No model involved (see the tools below).
+- **`synthesize`** stitches the pieces together and applies the gate: if it wasn't eligible, the amount
+  becomes €0 regardless of what the calculator returned. This step is **plain code on purpose** — every
+  piece reaching it is already grounded, so another model pass here would only add latency and a fresh
+  chance to hallucinate.
+- **`fallback`** handles off-topic questions — the hallucination firewall.
 
-The interesting bit is the middle. For money and mixed questions, the two branches — `rag → eligibility`
-and `calculator` — really do run **in parallel and then converge once**. That's not decoration: it's the
-clearest way to *show* (not just claim) "decompose into subtasks and execute them independently." The
-branches are different lengths, so `synthesize` is a *deferred* node, which makes LangGraph wait for both
-sides and join them exactly once instead of firing twice.
+The edges are where the parallelization lives. After the router the graph branches four ways; for money
+and mixed questions the two branches — `rag → eligibility` and `calculator` — run **in parallel and then
+converge once** at `synthesize`. That fan-out → fan-in is "decompose into subtasks and run them
+independently" made literal rather than just claimed. Because the branches are different lengths,
+`synthesize` is a *deferred* node, so LangGraph waits for both sides and joins them exactly once instead
+of firing twice.
 
 ### The RAG subgraph (`src/rag.py`)
 
-The retrieval side is its own compiled graph, bolted onto the main graph as a single `rag` node. It's
-shared — both the "what are my rights" path and the eligibility branch use it — and it's the most
-self-correcting part of the system:
+Retrieval is its own compiled graph, attached to the main graph as a single `rag` node and shared by
+both the rights path and the eligibility branch. This is the most self-correcting part of the system:
 
 ```
 retrieve → grade the results → good enough?  ──yes──▶ generate the answer
@@ -133,114 +150,118 @@ retrieve → grade the results → good enough?  ──yes──▶ generate the
                                             (bounded: at most REWRITE_MAX_RETRIES tries)
 ```
 
-The idea: don't trust the first retrieval blindly. Grade it, and if it's weak, rephrase the query and
-try once more before answering — but cap the retries so latency stays sane. The grader is a hybrid: the
-model judges relevance, with a cosine-distance floor as a safety net so a confidently-wrong model can't
-wave through junk. And `generate` is told, firmly, to answer *only* from what was retrieved — no outside
-knowledge, no invented figures.
+Rather than trust the first retrieval, it grades the results; if they're weak it rephrases the query and
+retrieves again — capped at `REWRITE_MAX_RETRIES` so latency stays bounded. That grade-and-retry is the
+bit that most resembles an agent: the loop reacts to its own output instead of running straight through.
+The grader is a hybrid (the model judges relevance, with a cosine-distance floor as a safety net so a
+confidently-wrong model can't wave junk through), and `generate` is told to answer *only* from what was
+retrieved — no outside knowledge, no invented figures.
 
-### Two tools (`src/tools.py`)
+### The two tools (`src/tools.py`)
 
-The task asks for at least two tools, at least one of which isn't retrieval. We have exactly that, and
-both are real LangChain `@tool`s so there's no argument about whether they count:
+The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s:
 
 - **`retrieve_passenger_rights(query)`** — the retrieval tool, used inside the RAG subgraph.
 - **`calculate_compensation(...)`** — the non-retrieval one, and the reason the numbers are trustworthy.
-  It takes airports and a delay, computes great-circle distance from real coordinates, picks the band,
-  applies the threshold and the 50% reduction rule, and returns a number. **No model anywhere in it.**
-  That matters twice over: it's why the amounts are exact, and it's why the calculator's output can
-  double as the *ground truth* for the eval — a model-free function can't drift.
-
-### State (`src/state.py`)
-
-Everything the nodes produce flows through one typed `AgentState` — the question, its type, the flight
-details, the retrieved docs, the rights answer, the eligibility verdict, the calculated amount, the final
-answer, and a running `trace`. The `trace` is append-only (each node adds its bit), and it's what the UI
-streams so you can watch the agent work.
+  Given airports and a delay it computes great-circle distance from real coordinates, picks the band,
+  applies the threshold and the 50% reduction rule, and returns a figure — **with no model anywhere in
+  it.** That's what makes the amounts exact, and it's also why the calculator's output can double as the
+  *ground truth* for the eval: a model-free function can't drift.
 
 ---
 
 ## Tech stack
 
-| Layer | Choice |
-|---|---|
-| Orchestration | **LangGraph** (main graph + a separate compiled RAG subgraph) |
-| LLM | **`qwen2.5:3b-instruct`** via **Ollama** (local, `temperature=0`) |
-| Embeddings | **`nomic-embed-text`** via Ollama (no torch / sentence-transformers) |
-| Vector store | **ChromaDB** (persisted at `data/chroma/`, derived) |
-| UI | **Streamlit** (one tab per layer: Chat · Corpus · RAG · Calculator · **Agent**) |
-| Runtime | **Python 3.14**, stdlib `venv`, pinned `requirements.txt` |
-| Container | `python:3.14-slim` + `docker-compose` (app + ollama) |
+Each package does one job:
 
-**Why a 3B model?** It has to run on a laptop with no paid API, so the choice is a trade-off, not a
-free lunch. `qwen2.5:3b-instruct` is small enough to be fast locally and notably good at structured
-output (which matters for the intake/routing step), at the cost of some prose polish. The eval section
-below is honest about where that shows. The model sits behind a pluggable `LLM_BACKEND` seam
-(`src/llm.py`), so swapping in a bigger model — or a stub for testing — is a config change, not surgery.
-Every knob lives in `config.py` with env overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`,
-`REWRITE_MAX_RETRIES`, …).
+| Package | Role |
+|---|---|
+| **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
+| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
+| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
+| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
+| **Docker / compose** | packages the app and Ollama together for a one-command run |
+
+Stdlib `venv` for isolation, pinned `requirements.txt`, Python 3.14. Knobs live in `config.py` with env
+overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
+`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
+not a rewrite.
+
+**Developed on a MacBook Air (Apple M1, 8 GB RAM).** That constraint drove both model choices below — and
+it's the reason "one query takes ~18 s" in the numbers further down: on modest hardware, this is honestly
+what a local-only stack costs.
+
+**Two models, both local via Ollama:**
+
+- **LLM — `qwen2.5:3b-instruct`** (`temperature=0`). On 8 GB of shared memory, a 3B model is about the
+  ceiling for comfortable interactive use, so the real question was *which* 3B. Qwen2.5 3B is notably
+  good at structured / JSON output — exactly what the intake-and-routing step depends on — and it's fast
+  locally. The trade-off is prose polish; the eval below is honest about where the small model shows its
+  size (routing, the occasional rough answer). The seam makes swapping in something larger trivial if the
+  hardware allows.
+- **Embeddings — `nomic-embed-text`** (also via Ollama). Reusing the Ollama runtime for embeddings avoids
+  pulling in torch / sentence-transformers — one local runtime serves both generation and retrieval,
+  which keeps the install lean and the image small.
 
 ---
 
 ## Quick start
 
-### Option A — Docker, all-in-one (works on any OS) ✅ easiest clean run
+**Prerequisites:** Docker (A or B) or Python 3.14 + a local Ollama (C). The two models total ~2.2 GB;
+the first run downloads them and builds the index, both cached afterwards.
+
+Pick one. **On a Mac, use B** — the all-in-Docker model is CPU-only and ~5.5× slower (see
+[Performance](#evaluation--performance)).
+
+### A — All-in-Docker (any OS, fully self-contained)
 
 ```bash
-docker compose up --build         # first run: builds app, pulls ~2.2 GB of models, ingests the corpus
-# then open http://localhost:8501
+docker compose up --build         # builds the app, pulls the models, ingests the corpus
+open http://localhost:8501
 ```
 
-First boot takes a few minutes (model pull + a one-time ingest, both cached in named volumes); after
-that it's fast. The app waits for Ollama's healthcheck before it starts.
+First boot is a few minutes (model pull + a one-time ingest, both cached in named volumes); later boots
+are quick. The app waits for Ollama's healthcheck before starting.
 
-> 🍎 **On a Mac, use Option B instead.** A Linux container can't reach the Apple GPU, so the in-container
-> model runs on CPU — measured **~5.5× slower** end to end (see [Performance](#evaluation--performance)).
+### B — Docker app + host Ollama (Mac fast path, also lightest on disk)
 
-### Option B — Docker app + Ollama on the host (the Mac fast path)
-
-Run Ollama natively (so it uses the GPU) and point the containerized app at it. One env override, zero
-code change:
+Run Ollama on the host so it uses the GPU, and point the container at it — one env var, no code change:
 
 ```bash
-# 1) on the host: run Ollama and pull both models
-ollama serve            # if it isn't already running
+# host: Ollama + the two models
+ollama serve                              # if not already running
 ollama pull qwen2.5:3b-instruct
 ollama pull nomic-embed-text
 
-# 2) start just the app, aimed at the host's Ollama
+# app only, aimed at the host
 OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d --build --no-deps app
-# then open http://localhost:8501
+open http://localhost:8501
 ```
 
-This is also the lightest option on disk — it reuses the host's models, skipping the ~1.5 GB Ollama
-image and the ~2.2 GB download. (`host.docker.internal` comes free on Docker Desktop; on native Linux
-the compose file already maps it via `extra_hosts`, so this works there too.)
+Reuses the host's models, so it skips the Ollama image and the model download.
+(`host.docker.internal` is automatic on Docker Desktop; the compose file maps it via `extra_hosts` for
+native Linux too.)
 
-### Option C — Local, no Docker (dev)
+### C — Local, no Docker
 
 ```bash
 python3.14 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-# needs a local Ollama with qwen2.5:3b-instruct + nomic-embed-text pulled
-python -m src.ingest                 # parse → chunk → embed the corpus → ChromaDB (idempotent)
-streamlit run streamlit_app.py       # http://localhost:8501
+# needs a local Ollama with both models pulled (see B)
+python -m src.ingest                      # parse → chunk → embed → ChromaDB (idempotent)
+streamlit run streamlit_app.py            # http://localhost:8501
 ```
 
-### Eval & tests
+### Eval, tests, and stack management
 
 ```bash
-python -m eval.functional_eval       # 15-question functional eval (routing / eligibility / amount / citations)
-python -m eval.loadtest              # load test (N=50) with per-node timing + bottleneck
-pytest tests/test_calculator.py      # the one classic unit test (the deterministic calculator)
-```
+python -m eval.functional_eval            # 15-question functional eval
+python -m eval.loadtest                   # load test (N=50) + per-node timing
+pytest tests/test_calculator.py           # the deterministic calculator's unit tests
 
-### Managing the Docker stack
-
-```bash
-docker compose stop / start          # pause / resume (no disk churn)
-docker compose down                  # remove containers, KEEP volumes (fast next start)
-docker compose down -v               # also drop volumes (frees ~2.2 GB of models; re-pull next time)
+docker compose stop / start               # pause / resume
+docker compose down                       # remove containers, keep volumes (fast restart)
+docker compose down -v                    # also drop volumes (frees ~2.2 GB; re-pull next time)
 ```
 
 ---
