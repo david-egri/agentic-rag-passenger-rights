@@ -44,6 +44,11 @@ services:
       # the seam that makes the host-Ollama fast path (above) a config flip, not a code change:
       #   OLLAMA_URL=http://host.docker.internal:11434 docker compose up --no-deps app
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    # Make the host-Ollama fast path work on native Linux too: Docker Desktop (macOS/Windows)
+    # injects `host.docker.internal` automatically, but plain Linux Docker doesn't. `host-gateway`
+    # resolves to the host's bridge-gateway IP, recreating that name. Harmless/redundant on Desktop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8501:8501"   # Streamlit UI → http://localhost:8501
     volumes:
