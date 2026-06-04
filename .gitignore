@@ -225,11 +225,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# --- Project-specific ---
-# Whole data/ tree ignored *for now* (user decision, 2026-06-03): the frozen corpus,
-# SOURCES.md, sources.json, and the derived Chroma store all stay local and out of git.
-# REVISIT before sharing the repo (Phase 6): decide commit-the-snapshot vs. a
-# scripts/fetch_corpus.py that re-derives it from documented URLs. See DECISIONS
-# `gitignore-data-for-now` and `corpus-2024-guidelines` for the provenance + fetch recipe.
-/data/
-# (data/chroma/ — the derived vector store — was already ignored; now subsumed by the above.)
+# --- Project-specific: data/ ---
+# Phase 7 (DECISIONS `commit-corpus`, supersedes `gitignore-data-for-now`): commit the
+# frozen corpus snapshot — the source of truth — so a fresh clone reproduces everything:
+#   data/corpus/  ·  data/airports.dat  ·  data/SOURCES.md  ·  data/corpus/sources.json
+# Only the *derived* vector store stays out of git — `python -m src.ingest` rebuilds it
+# from the corpus (idempotent). Never commit a stale Chroma store.
+data/chroma/
