@@ -370,15 +370,28 @@ LangChain's [workflows-and-agents guide](https://docs.langchain.com/oss/python/l
 - **Agent** — a model that *dynamically directs* its own process and tool use
 
 By that vocabulary this system is a **workflow**, not an agent: an augmented LLM (retrieval plus a
-calculator) wired through a fixed graph, rather than a model that picks its own next move. That's
-deliberate — the task has a known, fixed shape (work out what's being asked → look up the law and/or
-compute the amount → merge them), so a fixed graph is more predictable and far easier to evaluate than
-letting a 3B model free-wheel.
+calculator) wired through a fixed graph — built on the standard **routing** and **parallelization**
+patterns — rather than a model that picks its own next move. That's
+deliberate — the task has a known, fixed shape:
 
-Two standard workflow patterns from those guides show up directly: **routing** (a node classifies each
-question and sends it down the right path) and **parallelization** (the legal lookup and the calculation
-run as independent branches and rejoin at the end). But "workflow" doesn't mean the model is on rails —
-several points hand a real decision to the LLM rather than hardcoding it:
+1. work out what's being asked
+2. look up the law and/or compute the amount
+3. merge them
+
+Pinning that shape into a fixed graph — rather than letting a small local model free-wheel — is
+advantageous on several fronts:
+
+- **Deterministic** — the same question takes the same path to the same answer (`temperature=0`), with no
+  surprise tool calls
+- **Easier to evaluate** — a fixed set of routes and outputs can be measured against ground truth; a
+  free-wheeling agent is far harder to pin down
+- **Simpler** — fewer moving parts to reason about, debug, and keep correct
+- **Lighter on resources** — no exploratory tool-calling loops burning extra LLM calls, so it fits a
+  small local model on modest hardware
+- **A baseline** — a clear, measured starting point a more agentic version can later be compared against
+
+But "workflow" doesn't mean the model is on rails — several points hand a real decision to the LLM rather
+than hardcoding it:
 
 - **Self-correcting retrieval** — the corrective-RAG loop grades its own results and *rewrites the query*
   to retry when they come back weak: an evaluator-optimizer loop that reacts to its own output. The most
@@ -391,10 +404,12 @@ several points hand a real decision to the LLM rather than hardcoding it:
   question, with a distance floor only as a backstop.
 
 Concretely it's **two LangGraph graphs, each with its own typed state**: a main graph that runs the
-overall flow, and a separate RAG subgraph it calls for retrieval. They don't share a state object — the
-main graph hands the subgraph a query and maps the result back at the boundary (the standard LangGraph
-pattern for a subgraph with a different schema). Each graph is below, followed by the state object it
-carries.
+overall flow, and a separate RAG subgraph it calls for retrieval. The two standard workflow patterns show
+up directly in the main graph — **routing** (a node classifies each question and sends it down the right
+path) and **parallelization** (the legal lookup and the calculation run as independent branches and
+rejoin at the end). The two graphs don't share a state object — the main graph hands the subgraph a query
+and maps the result back at the boundary (the standard LangGraph pattern for a subgraph with a different
+schema). Each graph is below, followed by the state object it carries.
 
 > **◆ Decision —** *A directed workflow, not an autonomous agent.* The graph governs control flow
 > through predefined paths; the model fills individual steps but never chooses the next move.
