@@ -157,7 +157,7 @@ autonomy. The corrective-RAG grade→rewrite loop is the most defensibly "agenti
 - `README.md` — the full design rationale, architecture, and run/install guide.
 - `notes/EVAL_RESULTS.md` — functional-eval + load-test methodology and baseline numbers.
 - `notes/EVAL_CITATION_SCORING.md` — how the eval set asserts on citations.
-- `notes/FUTURE_IMPROVEMENTS.md` — open backlog and known limitations.
+- [GitHub Issues](https://github.com/david-egri/agentic-rag-passenger-rights/issues) — open backlog and known limitations (filed as labelled issues).
 - `data/SOURCES.md` — corpus + airport-data provenance and licensing.
 
 ---

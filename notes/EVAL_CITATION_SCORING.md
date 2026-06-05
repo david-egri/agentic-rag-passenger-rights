@@ -3,7 +3,7 @@
 How the eval set should assert on **citations** — so the eval set (`eval/eval_set.yaml`) and
 runner are built with this baked in. Motivated by the realization that most eval ground truth
 is design-independent, but the **citation-level** ground truth couples to the corpus (the
-corpus-coupled improvements live in `notes/FUTURE_IMPROVEMENTS.md`).
+corpus-coupled improvements are tracked as GitHub issues).
 
 ---
 
@@ -101,4 +101,4 @@ baseline is meaningful before any citation-correctness exists.
 
 ## Sequencing rule (one line)
 Pin **presence** in the baseline now; pin **citation-correctness/grounding** only **after any
-corpus changes** (see `notes/FUTURE_IMPROVEMENTS.md`), and only for cases whose grounding doc changed.
+corpus changes** (see the GitHub issues), and only for cases whose grounding doc changed.

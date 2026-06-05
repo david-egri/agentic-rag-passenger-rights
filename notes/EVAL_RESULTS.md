@@ -3,7 +3,7 @@
 Methodology and recorded results for the functional evaluation and load test. The eval set +
 runner are the **measurement instrument** (build-once, design-independent); the numbers below
 are the **baseline on the current design** — the corpus/code improvements they point to are
-tracked in `notes/FUTURE_IMPROVEMENTS.md`, and this baseline should be **re-run** after they land.
+tracked as GitHub issues, and this baseline should be **re-run** after they land.
 
 Commands:
 ```bash
@@ -50,7 +50,7 @@ python -m eval.loadtest               # load test (50–200 queries) → timing/
 - Wall time ≈ 256 s for 15 cases (avg ≈ 17 s/case); out_of_scope cases are ≈ 2.5 s (fallback,
   no LLM generation) vs. ≈ 17–28 s for RAG/generation cases — first signal for the load test.
 
-### Findings from the baseline (tracked in `notes/FUTURE_IMPROVEMENTS.md`)
+### Findings from the baseline (tracked as GitHub issues)
 
 **F-ROUTING — intake blurs rights_info / compensation_calc / mixed on a 3B model.** Every
 routing miss is the intake LLM pulling a query toward "compensation" whenever it mentions a
@@ -66,7 +66,7 @@ disruption **and** a money/refund word:
 *Impact is mostly cosmetic on correctness:* `compensation_calc` and `mixed` both run the
 eligibility branch, so **eligibility and amount stay correct even when misrouted** — the cost
 is the rights-paragraph / trace shape, not the numbers. This is the intake weakness the
-**structured-output intake** improvement targets (see `notes/FUTURE_IMPROVEMENTS.md`):
+**structured-output intake** improvement targets (tracked as a GitHub issue):
 re-measure routing after moving intake to `with_structured_output` + a Pydantic schema, and
 after the intake-prompt tweaks for the scope-asymmetry and ATC blind spots.
 
@@ -147,7 +147,7 @@ the RAG branch **conditional** — skip it for pure `compensation_calc`, keep it
 `rights_info`/`mixed` — would remove one ~14 s subgraph call from every calc query (a large
 share of realistic traffic). It's a **graph-wiring change** (touches `_route_from_router` +
 the eligibility branch's doc dependency + citation expectations) beyond this measurement's
-scope, tracked in `notes/FUTURE_IMPROVEMENTS.md`. Projected impact: calc queries drop from
+scope, tracked as a GitHub issue. Projected impact: calc queries drop from
 ~18 s to ~4–5 s (intake + calculator + deterministic eligibility/synthesize). To be
 implemented and **re-measured** with this same load test.
 
@@ -207,6 +207,6 @@ on off-topic questions). The load test confirmed they save real time.
 
 > **One line:** to make it more accurate, force the model to fill in a structured form and give
 > it examples of the cases it misses; to make it faster, skip the expensive law-reading step for
-> pure money questions. All of these are **code changes tracked in `notes/FUTURE_IMPROVEMENTS.md`** —
+> pure money questions. All of these are **code changes tracked as GitHub issues** —
 > this round only measured, and it gave us the exact targets.
 
