@@ -2,8 +2,8 @@
 
 A chatbot that answers two kinds of question about EU air passenger rights: *"what am I entitled to?"*
 (answered from the actual law, always with a citation) and *"how much money do I get?"* (worked out by
-a calculator, not guessed by a model). It's built as a small LangGraph agent, runs entirely on your own
-machine with a local LLM, and the Streamlit UI lets you watch it think one step at a time.
+a calculator, not guessed by a model). It's built as a small LangGraph agentic workflow, runs entirely on
+your own machine with a local LLM, and the Streamlit UI lets you watch it think one step at a time.
 
 No paid APIs, no data leaving the box. The whole thing comes up with one command (`docker compose up`).
 
@@ -195,7 +195,7 @@ not a rewrite. The two local models it runs (and *why* those two) are covered un
 
 ### Project structure
 
-And here's where everything lives in the repo:
+Here's where everything lives in the repo:
 
 ```
 config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
@@ -217,10 +217,7 @@ data/corpus/           # the frozen legal corpus (committed); data/chroma/ is de
 notes/                 # design proposal, decisions, eval results, review findings
 ```
 
-One thing worth calling out: ingestion ([`src/ingest.py`](src/ingest.py)) is a **generic drop-in loader** —
-drop a file into `data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its
-structure, and indexed with no code changes. The fetching/parsing/chunking details (and *why* chunking
-follows the legal structure rather than fixed token windows) are in
+Ingestion (`src/ingest.py`) is the generic, structure-aware drop-in loader detailed in
 [Corpus & sources](#corpus--sources) above.
 
 ### How it works
@@ -344,11 +341,10 @@ retrieves again — capped at `REWRITE_MAX_RETRIES` so latency stays bounded. Th
 bit that most resembles an agent: the loop reacts to its own output instead of running straight through.
 The shape follows the corrective-RAG pattern from LangGraph's own
 [RAG examples](https://github.com/langchain-ai/langgraph/tree/main/examples/rag) (retrieve → grade →
-conditionally rewrite/re-retrieve → generate), adapted here with a hard retry cap and the hybrid grader
-below.
-The grader is a hybrid (the model judges relevance, with a cosine-distance floor as a safety net so a
-confidently-wrong model can't wave junk through), and `generate` is told to answer *only* from what was
-retrieved — no outside knowledge, no invented figures.
+conditionally rewrite/re-retrieve → generate), adapted here with a hard retry cap and a **hybrid grader**:
+the model judges relevance, with a cosine-distance floor as a safety net so a confidently-wrong model can't
+wave junk through. `generate` is told to answer *only* from what was retrieved — no outside knowledge, no
+invented figures.
 
 The subgraph carries its own, smaller state — just the retrieval loop's working set, with no idea the
 larger agent exists:
@@ -623,6 +619,19 @@ open http://localhost:8501
 override is standard Compose GPU syntax and merges cleanly (`docker compose … config` checks out), but
 treat the end-to-end run as unproven until you try it on real NVIDIA hardware.
 
+### Using the UI
+
+There's a tab per layer, building up to the **Agent** tab, which is the actual product:
+
+- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
+- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
+- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
+  generate, with citations and the distances of what it retrieved.
+- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
+  amount).
+- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
+  disclaimer. There's a live graph diagram and a set of example queries to try.
+
 ### Managing
 
 ```bash
@@ -639,19 +648,4 @@ docker compose stop                       # stop containers
 docker compose down -v                    # stop + delete containers + delete network + delete volumes
 docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
 ```
-
-### Using the UI
-
-There's a tab per layer, building up to the **Agent** tab, which is the actual product:
-
-- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
-- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
-- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
-  generate, with citations and the distances of what it retrieved.
-- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
-  amount).
-- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
-  disclaimer. There's a live graph diagram and a set of example queries to try.
-
----
 
