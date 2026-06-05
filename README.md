@@ -148,8 +148,11 @@ as the core*, with a few supporting documents that make that core more usable. T
 data, kept deliberately separate:
 
 - **RAG corpus** — retrieved and cited as law
-- **airport reference data** — used only by the calculator, which needs airport coordinates to compute
-  the travel distance the compensation band depends on
+- **airport data** — used to calculate the distance between airports
+
+Why airport distances at all? Because the regulation ties the compensation amount to *how far the flight
+was* — the €250 / €400 / €600 bands are distance bands — so working out what's owed means first working
+out the great-circle distance between the origin and destination airports, which needs their coordinates.
 
 ### RAG corpus
 
@@ -186,11 +189,11 @@ legal or colloquial language. All four are © European Union, reusable with ackn
 > **Trade-off —** a little overlap and more sources to keep frozen, bought as a grounded passage to
 > return whether a question arrives in legal or colloquial language.
 
-### Airport reference data
+### Airport data
 
-The compensation calculator needs coordinates to compute great-circle distance, so it loads OpenFlights'
-`airports.dat` (IATA → lat/lon). This is **kept separate from the RAG corpus on purpose**: it's reference
-data for a deterministic tool, never retrieved, never cited as law. It also carries a different licence —
+The calculator loads OpenFlights' `airports.dat` (IATA → lat/lon) for those coordinates. This is **kept
+separate from the RAG corpus on purpose**: it's reference data for a deterministic tool, never retrieved,
+never cited as law. It also carries a different licence —
 **ODbL** (OpenFlights.org), a copyleft stronger than the EU content's — which is a second reason to keep
 it out of the corpus and attribute it on its own.
 
