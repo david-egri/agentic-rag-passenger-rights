@@ -85,145 +85,6 @@ this is just what you get back.
 
 ---
 
-## Quick start & usage
-
-The system is **two pieces**, and which combination you run is the only real choice:
-
-- **The solution** — the Streamlit UI plus the LangGraph agent, RAG, and calculator. Runs either in
-  Docker or in a local venv.
-- **The Ollama server** — serves the chat and embedding models and does all the heavy lifting. Runs
-  either **in Docker** or **natively on your host** — and *where it runs is what decides whether it gets
-  a GPU*, which is the difference between ~18 s/query and a few seconds.
-
-**Prerequisites:** Docker (options 1, 3, 4) or Python 3.14 (option 2). Either way Ollama has to live
-somewhere — bundled in a container, or installed natively. The two models total ~2.2 GB; the first run
-downloads them and builds the vector index, both cached afterwards.
-
-The options below run from **simplest + verified** to **more advanced**. Each says whether I could test
-it on the dev machine — a **MacBook Air M1** (Apple Silicon, no NVIDIA GPU), which is also why the
-in-Docker GPU path is the one I couldn't verify.
-
-### 1 — All-in-Docker, CPU only  ·  ✅ tested
-
-The one-command path: app and Ollama both in containers, nothing else to install.
-
-```bash
-docker compose up --build         # builds the app, pulls the models, ingests the corpus
-open http://localhost:8501        # Linux: xdg-open · Windows: start
-```
-
-First boot is a few minutes (model pull + a one-time ingest, both cached in named volumes); later boots
-are quick. The app waits for Ollama's healthcheck before starting. **Same command on macOS, Linux,
-Windows (Docker Desktop / WSL2 backend), and inside WSL2.**
-
-The catch: a Linux container can't use a GPU here without extra setup (that's option 4), so this is
-**CPU-only — ~18 s/query**. Simple and stable, and the path I verified end-to-end. Ideal for a first
-look; for real use, prefer a GPU path below.
-
-### 2 — Fully local, no Docker  ·  ✅ tested
-
-The development path: app straight from a venv, Ollama native on the host — so it uses your GPU
-automatically (Metal on a Mac, NVIDIA elsewhere). On a Mac this is the simplest way to get fast answers.
-
-```bash
-# host: Ollama + the two models
-ollama serve                              # if not already running
-ollama pull qwen2.5:3b-instruct
-ollama pull nomic-embed-text
-
-python3.14 -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m src.ingest                      # parse → chunk → embed → ChromaDB (idempotent)
-streamlit run streamlit_app.py            # http://localhost:8501
-```
-
-This is the primary dev setup, so it's well exercised.
-
----
-
-Both options above are tested. The two below mix Docker with host Ollama (option 3) or add a GPU inside
-Docker (option 4).
-
-### 3 — Hybrid: app in Docker, Ollama on the host  ·  🟡 tested (on Mac only)
-
-Containerize the app but let Ollama run natively for the GPU — one env var, no rebuild of the model side:
-
-```bash
-# host: Ollama + the two models (as in option 2)
-ollama serve
-ollama pull qwen2.5:3b-instruct
-ollama pull nomic-embed-text
-
-# app only, pointed at the host's Ollama
-OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d --build --no-deps app
-open http://localhost:8501
-```
-
-Reuses the host's models, so it also skips the Ollama image and the model download (lightest on disk).
-
-- **macOS:** verified — host Ollama uses the **Metal GPU**; `host.docker.internal` is automatic on
-  Docker Desktop. This is the Mac fast path.
-- **Windows:** same — native Ollama on the **NVIDIA GPU**, and Docker Desktop provides the hostname.
-- **Linux:** `host.docker.internal` isn't automatic, but the compose maps it via `extra_hosts:
-  host-gateway`, so it works as-is; host Ollama uses the **NVIDIA GPU**.
-- **WSL2:** run Ollama inside WSL (GPU works through WSL2); the app container reaches it the same way.
-
-### 4 — All-in-Docker with NVIDIA GPU  ·  ⚠️ not tested
-
-Option 1, but with the in-container Ollama using an NVIDIA GPU. GPU access is a *runtime* setting, not a
-build one — so it never touches the Dockerfile. It needs (a) the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-on the host and (b) a GPU reservation handed to the container. To keep plain `docker compose up` working
-on machines *without* a GPU, that reservation lives in a small opt-in override file
-(`docker-compose.gpu.yml`) instead of the default compose — so enabling it is just an extra `-f`, no
-editing. (**Apple Silicon can't do this at all** — a Linux container can't reach Metal; on a Mac, use
-option 2 or 3.)
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-open http://localhost:8501
-```
-
-- **Linux (NVIDIA):** install the Container Toolkit, then run the command as-is.
-- **Windows / WSL2 (NVIDIA):** Docker Desktop on the WSL2 backend with the toolkit inside your distro;
-  same command.
-- **macOS:** not applicable — no GPU inside a Linux container.
-
-⚠️ **Untested:** the dev machine is Apple Silicon with no NVIDIA GPU, so I couldn't verify this path. The
-override is standard Compose GPU syntax and merges cleanly (`docker compose … config` checks out), but
-treat the end-to-end run as unproven until you try it on real NVIDIA hardware.
-
-### Managing
-
-```bash
-docker compose up                         # create + start containers + create network
-docker compose down                       # stop + delete containers + delete network
-
-docker compose start                      # start containers
-docker compose stop                       # stop containers
-```
-
-### Cleaning up
-
-```bash
-docker compose down -v                    # stop + delete containers + delete network + delete volumes
-docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
-```
-
-### Using the UI
-
-There's a tab per layer, building up to the **Agent** tab, which is the actual product:
-
-- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
-- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
-- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
-  generate, with citations and the distances of what it retrieved.
-- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
-  amount).
-- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
-  disclaimer. There's a live graph diagram and a set of example queries to try.
-
----
-
 ## How it works
 
 It's worth being precise about what this is, because it's easy to oversell. In the vocabulary of
@@ -598,6 +459,145 @@ Three caveats about what this corpus — and the rules it encodes — does and d
   flags as still imperfect.
 - **Not legal advice.** General information only. For a real claim, check the official texts or talk to a
   qualified adviser.
+
+---
+
+## Quick start & usage
+
+The system is **two pieces**, and which combination you run is the only real choice:
+
+- **The solution** — the Streamlit UI plus the LangGraph agent, RAG, and calculator. Runs either in
+  Docker or in a local venv.
+- **The Ollama server** — serves the chat and embedding models and does all the heavy lifting. Runs
+  either **in Docker** or **natively on your host** — and *where it runs is what decides whether it gets
+  a GPU*, which is the difference between ~18 s/query and a few seconds.
+
+**Prerequisites:** Docker (options 1, 3, 4) or Python 3.14 (option 2). Either way Ollama has to live
+somewhere — bundled in a container, or installed natively. The two models total ~2.2 GB; the first run
+downloads them and builds the vector index, both cached afterwards.
+
+The options below run from **simplest + verified** to **more advanced**. Each says whether I could test
+it on the dev machine — a **MacBook Air M1** (Apple Silicon, no NVIDIA GPU), which is also why the
+in-Docker GPU path is the one I couldn't verify.
+
+### 1 — All-in-Docker, CPU only  ·  ✅ tested
+
+The one-command path: app and Ollama both in containers, nothing else to install.
+
+```bash
+docker compose up --build         # builds the app, pulls the models, ingests the corpus
+open http://localhost:8501        # Linux: xdg-open · Windows: start
+```
+
+First boot is a few minutes (model pull + a one-time ingest, both cached in named volumes); later boots
+are quick. The app waits for Ollama's healthcheck before starting. **Same command on macOS, Linux,
+Windows (Docker Desktop / WSL2 backend), and inside WSL2.**
+
+The catch: a Linux container can't use a GPU here without extra setup (that's option 4), so this is
+**CPU-only — ~18 s/query**. Simple and stable, and the path I verified end-to-end. Ideal for a first
+look; for real use, prefer a GPU path below.
+
+### 2 — Fully local, no Docker  ·  ✅ tested
+
+The development path: app straight from a venv, Ollama native on the host — so it uses your GPU
+automatically (Metal on a Mac, NVIDIA elsewhere). On a Mac this is the simplest way to get fast answers.
+
+```bash
+# host: Ollama + the two models
+ollama serve                              # if not already running
+ollama pull qwen2.5:3b-instruct
+ollama pull nomic-embed-text
+
+python3.14 -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python -m src.ingest                      # parse → chunk → embed → ChromaDB (idempotent)
+streamlit run streamlit_app.py            # http://localhost:8501
+```
+
+This is the primary dev setup, so it's well exercised.
+
+---
+
+Both options above are tested. The two below mix Docker with host Ollama (option 3) or add a GPU inside
+Docker (option 4).
+
+### 3 — Hybrid: app in Docker, Ollama on the host  ·  🟡 tested (on Mac only)
+
+Containerize the app but let Ollama run natively for the GPU — one env var, no rebuild of the model side:
+
+```bash
+# host: Ollama + the two models (as in option 2)
+ollama serve
+ollama pull qwen2.5:3b-instruct
+ollama pull nomic-embed-text
+
+# app only, pointed at the host's Ollama
+OLLAMA_URL=http://host.docker.internal:11434 docker compose up -d --build --no-deps app
+open http://localhost:8501
+```
+
+Reuses the host's models, so it also skips the Ollama image and the model download (lightest on disk).
+
+- **macOS:** verified — host Ollama uses the **Metal GPU**; `host.docker.internal` is automatic on
+  Docker Desktop. This is the Mac fast path.
+- **Windows:** same — native Ollama on the **NVIDIA GPU**, and Docker Desktop provides the hostname.
+- **Linux:** `host.docker.internal` isn't automatic, but the compose maps it via `extra_hosts:
+  host-gateway`, so it works as-is; host Ollama uses the **NVIDIA GPU**.
+- **WSL2:** run Ollama inside WSL (GPU works through WSL2); the app container reaches it the same way.
+
+### 4 — All-in-Docker with NVIDIA GPU  ·  ⚠️ not tested
+
+Option 1, but with the in-container Ollama using an NVIDIA GPU. GPU access is a *runtime* setting, not a
+build one — so it never touches the Dockerfile. It needs (a) the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host and (b) a GPU reservation handed to the container. To keep plain `docker compose up` working
+on machines *without* a GPU, that reservation lives in a small opt-in override file
+(`docker-compose.gpu.yml`) instead of the default compose — so enabling it is just an extra `-f`, no
+editing. (**Apple Silicon can't do this at all** — a Linux container can't reach Metal; on a Mac, use
+option 2 or 3.)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+open http://localhost:8501
+```
+
+- **Linux (NVIDIA):** install the Container Toolkit, then run the command as-is.
+- **Windows / WSL2 (NVIDIA):** Docker Desktop on the WSL2 backend with the toolkit inside your distro;
+  same command.
+- **macOS:** not applicable — no GPU inside a Linux container.
+
+⚠️ **Untested:** the dev machine is Apple Silicon with no NVIDIA GPU, so I couldn't verify this path. The
+override is standard Compose GPU syntax and merges cleanly (`docker compose … config` checks out), but
+treat the end-to-end run as unproven until you try it on real NVIDIA hardware.
+
+### Managing
+
+```bash
+docker compose up                         # create + start containers + create network
+docker compose down                       # stop + delete containers + delete network
+
+docker compose start                      # start containers
+docker compose stop                       # stop containers
+```
+
+### Cleaning up
+
+```bash
+docker compose down -v                    # stop + delete containers + delete network + delete volumes
+docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
+```
+
+### Using the UI
+
+There's a tab per layer, building up to the **Agent** tab, which is the actual product:
+
+- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
+- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
+- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
+  generate, with citations and the distances of what it retrieved.
+- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
+  amount).
+- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
+  disclaimer. There's a live graph diagram and a set of example queries to try.
 
 ---
 
