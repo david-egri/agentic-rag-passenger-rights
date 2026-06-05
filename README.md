@@ -114,6 +114,13 @@ text). Each supporting document closes a specific gap — the **guidelines** add
 question is phrased in — so retrieval has a grounded passage to return whether the question arrives in
 legal or colloquial language. All four are © European Union, reusable with acknowledgement.
 
+> **◆ Decision —** *The regulation is the core; three supporting documents each close a specific gap.*
+> The binding text, plus the Commission's interpretative guidelines (interpretation), the legislative
+> summary (structure), and a plain-language summary (everyday vocabulary).
+>
+> **Trade-off —** a little overlap and more sources to keep frozen, bought as a grounded passage to
+> return whether a question arrives in legal or colloquial language.
+
 ### The airport reference data — used by the calculator, *not* the corpus
 
 The compensation calculator needs coordinates to compute great-circle distance, so it loads OpenFlights'
@@ -137,6 +144,13 @@ where `curl` is blocked); the Your Europe page was reduced to its `<main>` conte
 This is also *why the corpus is committed frozen* rather than fetched at build time — re-fetching is
 brittle and reproducibility shouldn't depend on a WAF's mood.
 
+> **◆ Decision —** *Freeze and commit the corpus; treat the index as derived.* `data/corpus/` is a
+> dated snapshot in git, while the ChromaDB index is gitignored and rebuilt by an idempotent
+> `python -m src.ingest`.
+>
+> **Trade-off —** the repo carries the source text, but a fresh clone reproduces the identical index
+> offline — no dependence on a flaky re-fetch through EUR-Lex's WAF.
+
 **Parsing was awkward because legal HTML isn't semantic.** The regulation marks each Article with a bare
 `Article N` paragraph (not an `<h*>` heading), recitals as `(N) …` lines wedged between "Whereas:" and
 "HAVE ADOPTED THIS REGULATION", and the OJ notices tag their section headings with a CSS class
@@ -152,6 +166,13 @@ then only on **paragraph** boundaries with a one-paragraph overlap, so a retriev
 coherent, self-contained provision rather than an arbitrary 512-token slice that begins mid-sentence. The
 loader is **generic and drop-in**: add a file to `data/corpus/`, re-run `python -m src.ingest`, and it's
 detected, chunked by its structure, embedded, and indexed — no code changes.
+
+> **◆ Decision —** *Chunk on legal boundaries, not fixed token windows.* One chunk per Article /
+> Recital (per Section for the guidelines, per heading for the summaries), sub-splitting only oversized
+> articles on paragraph boundaries with a one-paragraph overlap.
+>
+> **Trade-off —** chunking is structure-specific (a per-document-type chunker) rather than one generic
+> splitter, in exchange for citations that always point at a real, self-contained provision.
 
 ### Caveats
 
@@ -193,6 +214,13 @@ overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the 
 not a rewrite. The two local models it runs (and *why* those two) are covered under
 [Model choices](#model-choices) below.
 
+> **◆ Decision —** *Everything runs locally via Ollama — no paid APIs, nothing leaves the machine.*
+> Both generation and embeddings are served by a local Ollama runtime, behind a pluggable
+> `LLM_BACKEND` seam (`src/llm.py`).
+>
+> **Trade-off —** capped at models that fit modest local hardware (hence ~18 s/query), bought as zero
+> cost, full privacy, and a reproducible offline stack.
+
 ### Project structure
 
 Here's where everything lives in the repo:
@@ -226,7 +254,15 @@ It's worth being precise about what this is, because it's easy to oversell. In t
 Anthropic's [*Building Effective Agents*](https://www.anthropic.com/engineering/building-effective-agents),
 this is a **workflow**, not an autonomous agent: an **augmented LLM** — a model given retrieval and a
 calculator — orchestrated through predefined code paths, rather than a model that decides its own next
-move. That's deliberate. The task has a known, fixed shape (work out what's being asked → look up the
+move.
+
+> **◆ Decision —** *A directed workflow, not an autonomous agent.* The graph governs control flow
+> through predefined paths; the model fills individual steps but never chooses the next move.
+>
+> **Trade-off —** less open-ended autonomy, bought back as predictability and genuine evaluability —
+> the right call for a 3B model on a fixed-shape task.
+
+That's deliberate. The task has a known, fixed shape (work out what's being asked → look up the
 law and/or compute the amount → merge them), so a fixed graph is more predictable and far easier to
 evaluate than letting a 3B model free-wheel.
 
@@ -244,6 +280,13 @@ overall flow, and a separate RAG subgraph it calls for retrieval. They don't sha
 main graph hands the subgraph a query and maps the result back at the boundary (the standard LangGraph
 pattern for a subgraph with a different schema). Each graph is below, followed by the state object it
 carries.
+
+> **◆ Decision —** *Two graphs, each with its own typed state.* The main graph and the RAG subgraph
+> don't share a state object; the main graph hands the subgraph a query and maps just the result
+> fields back at the boundary.
+>
+> **Trade-off —** a small boundary-mapping step to maintain, in exchange for a RAG subgraph that stays
+> independently testable and reusable (both the rights path and the eligibility branch call it).
 
 ### The main graph (`src/graph.py`) — 7 nodes
 
@@ -292,12 +335,28 @@ Reading it node by node:
   chance to hallucinate.
 - **`fallback`** handles off-topic questions — the hallucination firewall.
 
+> **◆ Decision —** *`synthesize` is plain code that owns the eligibility gate; the calculator stays
+> eligibility-agnostic.* The calculator returns only the candidate amount, and `synthesize`
+> deterministically merges the already-grounded parts and sets `final = eligible ? amount : €0` — no
+> model call.
+>
+> **Trade-off —** the "is it compensable?" judgement and the "how much?" arithmetic stay decoupled and
+> separately testable, at the cost of the gate living one node away from the calculator that produced
+> the amount.
+
 The edges are where the parallelization lives. After the router the graph branches four ways; for money
 and mixed questions the two branches — `rag → eligibility` and `calculator` — run **in parallel and then
 converge once** at `synthesize`. That fan-out → fan-in is "decompose into subtasks and run them
 independently" made literal rather than just claimed. Because the branches are different lengths,
 `synthesize` is a *deferred* node, so LangGraph waits for both sides and joins them exactly once instead
 of firing twice.
+
+> **◆ Decision —** *Compensation and mixed queries fan out into independent branches that converge
+> once.* `rag → eligibility` and `calculator` run as parallel branches and rejoin at a *deferred*
+> `synthesize`, so "decompose into subtasks and run them independently" is literal, not asserted.
+>
+> **Trade-off —** the deferred-join wiring is more intricate than a straight sequential path, bought as
+> real parallel decomposition and a single clean convergence point.
 
 The nodes don't pass arguments to each other — they read from and write to one shared, typed object,
 `AgentState`. Each node returns a partial dict that LangGraph merges in:
@@ -346,6 +405,19 @@ the model judges relevance, with a cosine-distance floor as a safety net so a co
 wave junk through. `generate` is told to answer *only* from what was retrieved — no outside knowledge, no
 invented figures.
 
+> **◆ Decision —** *Corrective RAG: grade the retrieval and rewrite the query when it's weak, but cap
+> the retries.* The loop reacts to its own output (retrieve → grade → conditionally rewrite/re-retrieve
+> → generate), bounded by `REWRITE_MAX_RETRIES`.
+>
+> **Trade-off —** an extra retrieval round-trip on weak hits, bounded so latency stays predictable —
+> this self-correcting loop is the most genuinely agentic part of the system.
+
+> **◆ Decision —** *Grade relevance with a hybrid of model judgement and a cosine-distance floor.* The
+> model judges relevance, with a distance threshold underneath as a safety net.
+>
+> **Trade-off —** a second, mechanical check to calibrate, so a confidently-wrong model can't wave junk
+> through on its own.
+
 The subgraph carries its own, smaller state — just the retrieval loop's working set, with no idea the
 larger agent exists:
 
@@ -381,6 +453,13 @@ matched chunk's `text`, its citation `metadata` (source, article, title, url, �
 = closer). It's the only thing that reads the corpus, which is why grounding flows through exactly one
 place.
 
+> **◆ Decision —** *Ground every rights answer and always cite; one tool is the sole corpus reader.*
+> Rights answers come only from retrieved chunks, each carrying its `source` + `article`, and
+> `retrieve_passenger_rights` is the single place that touches the corpus.
+>
+> **Trade-off —** the model can't lean on its own memory, so an unsupported question gets an honest
+> "the law doesn't cover this" instead of a fluent guess.
+
 **`calculate_compensation(origin_iata: str, dest_iata: str, delay_hours: float, disruption_type: str =
 "delay", rerouting_offered: bool = False) -> dict`** — the non-retrieval tool, and the reason the numbers
 are trustworthy.
@@ -395,20 +474,33 @@ are trustworthy.
 Given those inputs it resolves both airports' coordinates (OpenFlights), computes great-circle distance,
 picks the €250 / €400 / €600 band, applies the 3-hour threshold and the 50% reduction rule, and returns a
 dict (`distance_km`, `band`, `final_amount_eur`, a plain-language `explanation`, …) — **with no model
-anywhere in it.** That's what makes the amounts exact, and it's also why the calculator's output can double
-as the *ground truth* for the eval: a model-free function can't drift.
+anywhere in it.**
 
-One design decision worth calling out here, because it's a concession to the small model rather than to the
-law: the calculator keys off **IATA city/metropolitan codes, not specific airport codes** (via a
-`METRO_ALIASES` fallback in `src/calculator.py`). When the intake step extracts airports from free text,
+> **◆ Decision —** *The compensation figure comes from code, not the model.* A small model asked to
+> apply the bands and the 3-hour cutoff will occasionally invent the number, so the amount is computed
+> by the deterministic, LLM-free calculator and the model never produces it.
+>
+> **Trade-off —** a model-free function can't drift, so the very same code doubles as the eval's ground
+> truth.
+
+The calculator also makes one concession to the small model rather than to the law: it keys off **IATA
+city/metropolitan codes, not specific airport codes** (via a `METRO_ALIASES` fallback in
+`src/calculator.py`). When the intake step extracts airports from free text,
 the 3B model reliably produces the *city* code a person thinks in — London → `LON`, Paris → `PAR` — but is
 much shakier at the exact airport (`LHR` vs `LGW` vs `STN`). OpenFlights' table only carries airport codes,
 so a bare lookup of `LON` would fail. The fallback maps each metro code to the city's principal airport,
 applied **only when the direct airport lookup misses** (so it never overrides a real airport code). Since
 the amount keys off the *distance band*, and a city's airports sit within a few km of each other relative
-to the ~1500/3500 km band edges, the representative airport is close enough — we traded a sliver of
-geographic precision for entity-extraction reliability, which is the right trade when the model is the
-weak link.
+to the ~1500/3500 km band edges, the representative airport is close enough.
+
+> **◆ Decision —** *The calculator keys off IATA city/metropolitan codes, not specific airport codes.*
+> A `METRO_ALIASES` fallback maps a city code to its principal airport, applied only when a direct
+> airport lookup misses — a concession to the small model, which reliably extracts the city code
+> (`LON`, `PAR`) but is shaky on the exact airport (`LHR` vs `LGW`).
+>
+> **Trade-off —** a sliver of geographic precision for entity-extraction reliability — the right trade
+> when the model is the weak link, since a city's airports sit within a few km relative to the
+> ~1500/3500 km band edges.
 
 ### Model choices
 
@@ -430,6 +522,14 @@ what a local-only stack costs.
 - **Embeddings — `nomic-embed-text`** (also via Ollama). Reusing the Ollama runtime for embeddings avoids
   pulling in torch / sentence-transformers — one local runtime serves both generation and retrieval,
   which keeps the install lean and the image small.
+
+> **◆ Decision —** *`qwen2.5:3b-instruct` — chosen for structured-output reliability under an 8 GB
+> budget.* A 3B model is about the ceiling for comfortable interactive use here; of those, Qwen2.5 3B
+> is notably strong at the JSON/structured output the intake-and-routing step depends on.
+>
+> **Trade-off —** prose polish (the small model shows its size on routing and the occasional rough
+> answer) for reliable structured extraction and fast local inference — and the seam makes swapping in
+> something larger trivial.
 
 ---
 
@@ -460,6 +560,13 @@ deliberately, *against the law rather than against the system*:
   change** instead of silently tracking whatever the graph happens to emit today. The two cases the small
   model still gets wrong are flagged in the set as `known_fail`, so the runner separates a *known gap* from
   a *new regression*.
+
+> **◆ Decision —** *Ground truth is anchored to what Reg. 261/2004 says, not to the system's output.*
+> Amounts come from the unit-tested calculator (distances recomputed from real coordinates),
+> eligibility from the regulation's control test, citations by set-membership against the corpus.
+>
+> **Trade-off —** the targets can diverge from current output and surface as failures, but they measure
+> correctness rather than self-consistency and survive a future code or corpus change.
 
 Run it yourself:
 
@@ -604,6 +711,13 @@ on machines *without* a GPU, that reservation lives in a small opt-in override f
 (`docker-compose.gpu.yml`) instead of the default compose — so enabling it is just an extra `-f`, no
 editing. (**Apple Silicon can't do this at all** — a Linux container can't reach Metal; on a Mac, use
 option 2 or 3.)
+
+> **◆ Decision —** *The NVIDIA GPU reservation lives in an opt-in override file, not the default
+> compose.* `docker-compose.gpu.yml` adds the reservation only when you pass an extra `-f`; the base
+> `docker-compose.yml` stays GPU-free.
+>
+> **Trade-off —** GPU users type one more flag, so that plain `docker compose up` keeps working
+> unchanged on the majority of machines that have no GPU.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
