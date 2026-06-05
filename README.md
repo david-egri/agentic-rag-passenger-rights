@@ -733,19 +733,6 @@ open http://localhost:8501
 override is standard Compose GPU syntax and merges cleanly (`docker compose … config` checks out), but
 treat the end-to-end run as unproven until you try it on real NVIDIA hardware.
 
-### Using the UI
-
-There's a tab per layer, building up to the **Agent** tab, which is the actual product:
-
-- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
-- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
-- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
-  generate, with citations and the distances of what it retrieved.
-- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
-  amount).
-- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
-  disclaimer. There's a live graph diagram and a set of example queries to try.
-
 ### Managing
 
 ```bash
@@ -762,4 +749,18 @@ docker compose stop                       # stop containers
 docker compose down -v                    # stop + delete containers + delete network + delete volumes
 docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
 ```
+
+### Using the UI
+
+There's a tab per layer, building up to the **Agent** tab — the actual product. The interactive tabs
+(RAG, Calculator, Agent) each ship a dropdown of ready-made examples, so you can exercise the system
+without having to invent inputs.
+
+| Tab | What it does | Examples |
+|---|---|---|
+| **Chat** | Talk to the raw LLM, no agent — the starting point everything was built on. | free-form |
+| **Corpus** | Browse the indexed chunks with their Article / Recital / Section labels and metadata. | document picker |
+| **RAG** | Run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) → generate, with citations and the distances of what it retrieved. | ✅ dropdown |
+| **Calculator** | Flight inputs in, the full breakdown out (distance → band → threshold → reduction → amount). | ✅ dropdown |
+| **Agent** | The whole graph: a live, node-by-node trace, the final grounded answer, citations, and the disclaimer — plus a live graph diagram. | ✅ dropdown |
 
