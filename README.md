@@ -706,13 +706,16 @@ Each question is tagged with:
 
 Each of those labels is derived deliberately — from the law, not from the system's own output:
 
+- `query_type` — set by hand from what the question asks under Reg. 261/2004: a rights question →
+  `rights_info`, an amount → `compensation_calc`, both → `mixed`, anything outside the regulation →
+  `out_of_scope` (a coverage/scope question still counts as in-scope, per Art. 3).
+- `eligible` — set by hand from the regulation's control test (own-staff strike → compensable; weather /
+  ATC → extraordinary → €0).
 - `amount_eur` — comes from the deterministic calculator, not from a model, and the calculator is itself
   unit-tested ([`tests/test_calculator.py`](tests/test_calculator.py)), so the expected € is a verified
   figure. Critically, every route's distance was **recomputed from real OpenFlights coordinates** before
   pinning the amount, because routes near a band edge (~1500 / ~3500 km) can flip the expected value — a
   wrong "expected" is worse than none.
-- `eligible` — set by hand from the regulation's control test (own-staff strike → compensable; weather /
-  ATC → extraordinary → €0).
 - `any_of` — matched on normalized `source` + `article` as a set-membership (recall) check against the
   current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones fails.
 
@@ -738,6 +741,15 @@ introduced bug.
 >
 > **Trade-off —** the targets can diverge from current output and surface as failures, but they measure
 > correctness rather than self-consistency and survive a future code or corpus change.
+
+> **◆ Decision —** *Score citations by recall, not exact match.* A produced citation set passes if it
+> contains at least one accepted `source` + `article` (set-membership), with label-tolerant article
+> matching (`Art. 7` ≡ `Art. 7(1)`) — over-citing extra valid articles is fine; missing all the required
+> ones fails.
+>
+> **Trade-off —** it won't catch citation noise, but it rewards grounding an answer in *a* correct
+> provision rather than reproducing one exact label — the realistic bar when several articles can
+> legitimately back the same answer.
 
 > **◆ Decision —** *Flag the small model's known misses as `known_fail` and tally them separately.* The
 > two cases the 3B model reliably gets wrong are tagged in the eval set, scored like any other case, but
