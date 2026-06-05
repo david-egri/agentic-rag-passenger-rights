@@ -85,7 +85,7 @@ this is just what you get back.
 
 ---
 
-## Quick start
+## Quick start & usage
 
 The system is **two pieces**, and which combination you run is the only real choice:
 
@@ -209,9 +209,7 @@ docker compose down -v                    # stop + delete containers + delete ne
 docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
 ```
 
----
-
-## Using the UI
+### Using the UI
 
 There's a tab per layer, building up to the **Agent** tab, which is the actual product:
 
