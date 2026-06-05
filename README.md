@@ -25,7 +25,7 @@ machine, no paid APIs, nothing leaving the box, up with one command (`docker com
 
 ---
 
-## Scope & problem statement
+## Description of the problem and the objective
 
 With that need established, the scope is narrow and deliberate. The system covers exactly one law —
 **Regulation (EC) No 261/2004**, the EU's rules on flight disruption — and is not a general travel
@@ -69,25 +69,29 @@ That need is a poor fit for a plain chatbot, for three reasons that end up shapi
 - **Knows its lane.** Many questions fall outside this regulation; the system should recognise those and
   decline rather than guess.
 
-So the model needs help: retrieval to stay grounded, a calculator to get the number right, and some
-structure to keep it in its lane. That combination — an LLM given tools and retrieval — is the core of
-what's built here, and it sorts those everyday questions into four kinds, each answered a different way:
+Put together, those three needs point to three pieces:
 
-- **"What are my rights?"** → a plain-language answer grounded in the law, **with a citation** (which
-  document, which article). If the law doesn't actually support an answer, it says so rather than bluff.
-- **"How much am I owed?"** → an **exact euro figure**: the right €250 / €400 / €600 band for your
-  distance, after the 3-hour threshold and the eligibility check (weather gets you €0, the airline's own
-  strike doesn't).
-- **"Both — what am I owed *and* why?"** → a single answer that carries the grounded legal explanation
-  **and** the computed amount together.
-- **Anything off-topic** (baggage fees, visas, pricing…) → a polite "that's outside what I cover," never
-  a made-up rule.
+- **RAG** to stay grounded in the law
+- a **calculator tool**, deterministic, to get the number right
+- **conditional routing** to keep each question in its lane
 
-*How* it tells these apart and produces each answer is the [How it works](#how-it-works) section below;
-this is just what you get back.
+The routing comes first — it sorts every question into one of four kinds, each handled a different way:
 
-These four cases — and the shape of the problem behind them — are what drive the agentic design. Each
-core capability the system needs maps to something the problem itself demands:
+- **"What are my rights?"** → a plain-language answer grounded in the law, with a citation. If the law
+  doesn't support an answer, it says so rather than bluff.
+- **"How much am I owed?"** → a figure the calculator works out from the flight's route (origin and
+  destination), the delay, the disruption type, and whether re-routing was offered — then checked
+  against eligibility.
+- **"What am I owed *and* why?"** → a single answer that carries the grounded legal explanation
+  and the computed amount together.
+- **"Off-topic"** → a polite "that's outside what I cover," never a made-up rule.
+
+The third case — **"What am I owed *and* why?"** — needs more than a single lane: it breaks into two
+subtasks, looking up the rights and computing the amount, that can run independently and then be combined.
+That's subtask decomposition and independent execution, again surfacing straight from the domain.
+
+Taken together, these domain insights define the architecture that follows — each capability the problem
+demands maps onto a concrete piece of the design:
 
 > **◆ Decision —** *Four question types → explicit conditional routing.* An intake step classifies each
 > question into one of the four lanes and a router sends it down the matching path — autonomous
@@ -95,6 +99,12 @@ core capability the system needs maps to something the problem itself demands:
 >
 > **Trade-off —** routing can misread a borderline question, but the lanes overlap enough that the answer
 > stays correct, and a fixed route set is far easier to test than free-form tool choice.
+
+> **◆ Decision —** *The off-topic lane is a hard firewall, not a best-effort answer.* A question outside
+> Reg. 261/2004 routes to a dedicated fallback that declines — it never improvises a rule or an amount.
+>
+> **Trade-off —** the system says "I can't help with that" more often than a general chatbot would, in
+> exchange for never fabricating law or numbers outside its competence.
 
 > **◆ Decision —** *The "how much?" half → a deterministic, non-retrieval tool.* The amount is pure
 > arithmetic over the law's distance bands and thresholds, so it lives in a model-free calculator — the
@@ -112,10 +122,17 @@ core capability the system needs maps to something the problem itself demands:
 
 > **◆ Decision —** *The "both" question → decomposition into independent subtasks.* A mixed question fans
 > out into a rights/eligibility branch and a calculator branch that run independently and converge once —
-> decomposition and independent execution made literal, with intermediate results carried in typed state.
+> decomposition and independent execution made literal.
 >
 > **Trade-off —** the fan-out/fan-in wiring is more intricate than a sequential path, bought as genuine
 > parallel decomposition rather than an asserted one.
+
+> **◆ Decision —** *Intermediate results live in one typed, shared state.* Extracted flight details, the
+> routing decision, retrieved chunks, the eligibility verdict, the computed amount — each node reads from
+> and writes to a single typed `AgentState` instead of passing arguments node to node.
+>
+> **Trade-off —** one schema to keep coherent across every node, bought as an inspectable record of how
+> far each query got — including the append-only trace the UI streams step by step.
 
 ---
 
