@@ -830,15 +830,16 @@ counts:
 - **Citation present / correct** applies only to the 7 rights and mixed questions that must cite the
   law; calculator-only and off-topic questions carry nothing to cite.
 
-In plain terms: **the money is always right, and the grounding nearly always is.** Every amount and every
-eligibility call was correct, every rights answer came with a real citation — nothing invented — and all
-but one pointed at the right provision.
-The one soft spot is *sorting questions into the right lane*: when a question mixes a disruption with a
-word like "refund" or "how much," the small model tends to read it as a money question. The saving grace
-is that it barely matters for the answer — the money and mixed lanes both run the eligibility branch, so
-even a misrouted question comes out with the **correct number**; only the path it took looks different.
-The fix (force the intake step to fill a strict schema instead of replying freely) is understood and
-queued for a later review phase.
+In plain terms: **the money is always right, and the grounding nearly always is — the one real weakness is
+routing.** Every amount and every eligibility call was correct, every rights answer came with a real
+citation — nothing invented — and all but one pointed at the right provision. So the substance holds up
+across the board; what doesn't, and the **single weakest part of the system**, is *sorting questions into
+the right lane*. At 71% it's the lowest score by a wide margin, and the failure mode is consistent: when a
+question mixes a disruption with a word like "refund" or "how much," the small model tends to read it as a
+money question. The saving grace is that it barely matters for the answer — the money and mixed lanes both
+run the eligibility branch, so even a misrouted question comes out with the **correct number**; only the
+path it took looks different. But it's squarely the thing to fix, and the fix is already understood (force
+the intake step to fill a strict schema instead of replying freely) and queued for a later review phase.
 
 ### Performance test
 
