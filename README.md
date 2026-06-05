@@ -390,26 +390,40 @@ advantageous on several fronts:
   small local model on modest hardware
 - **A baseline** — a clear, measured starting point a more agentic version can later be compared against
 
-But "workflow" doesn't mean the model is on rails — several points hand a real decision to the LLM rather
-than hardcoding it:
+Concretely it's **two LangGraph graphs**, each with its own typed state:
 
-- **Self-correcting retrieval** — the corrective-RAG loop grades its own results and *rewrites the query*
-  to retry when they come back weak: an evaluator-optimizer loop that reacts to its own output. The most
-  clearly *agentic* part.
+- **main graph** — runs the overall flow
+- **RAG subgraph** — a separate graph the main graph calls for retrieval
+
+The main graph puts the two standard workflow patterns to work directly:
+
+- **routing** — a node classifies each question and sends it down the right path
+- **parallelization** — the legal lookup and the calculation run as independent branches and rejoin at the end
+
+The RAG subgraph runs the corrective-RAG (evaluator-optimizer) pattern as a short loop:
+
+- **retrieve** — pull the top-_k_ passages for the query
+- **grade** — judge whether they actually answer the question
+- **rewrite & retry** — if they're weak, rephrase the query and retrieve again (bounded)
+- **generate** — write a grounded, cited answer from what survived
+
+The two graphs don't share a state object — the main graph hands the subgraph a query and maps the result
+back at the boundary (the standard LangGraph pattern for a subgraph with a different schema). Each graph is
+below, followed by the state object it carries.
+
+Now that the structure is concrete, it's worth being clear that "workflow" doesn't mean the model is on
+rails — several points hand a real decision to the LLM rather than hardcoding it:
+
+- **Self-correcting retrieval** — corrective-RAG grades its own results and *rewrites the query* to retry
+  when they're weak — an evaluator-optimizer loop, and the most clearly *agentic* part.
 - **LLM-driven routing** — which lane a question takes is the model's classification, not a keyword rule
   (a real decision, though only among predefined branches).
+- **Subtask decomposition** — for a "both" question, the planner has the model break it into concrete
+  subtasks rather than applying a hardcoded split (with a fixed fallback if the output doesn't parse).
 - **Autonomous eligibility call** — the model judges whether a disruption was within the carrier's
   control (the "extraordinary circumstances" test) instead of matching a fixed table.
 - **Relevance grading** — the grader is the model deciding whether retrieved passages actually answer the
   question, with a distance floor only as a backstop.
-
-Concretely it's **two LangGraph graphs, each with its own typed state**: a main graph that runs the
-overall flow, and a separate RAG subgraph it calls for retrieval. The two standard workflow patterns show
-up directly in the main graph — **routing** (a node classifies each question and sends it down the right
-path) and **parallelization** (the legal lookup and the calculation run as independent branches and
-rejoin at the end). The two graphs don't share a state object — the main graph hands the subgraph a query
-and maps the result back at the boundary (the standard LangGraph pattern for a subgraph with a different
-schema). Each graph is below, followed by the state object it carries.
 
 > **◆ Decision —** *A directed workflow, not an autonomous agent.* The graph governs control flow
 > through predefined paths; the model fills individual steps but never chooses the next move.
