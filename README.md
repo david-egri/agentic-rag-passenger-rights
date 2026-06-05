@@ -419,26 +419,7 @@ to the ~1500/3500 km band edges, the representative airport is close enough — 
 geographic precision for entity-extraction reliability, which is the right trade when the model is the
 weak link.
 
----
-
-## Tech stack
-
-Each package does one job:
-
-| Package | Role |
-|---|---|
-| **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
-| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
-| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
-| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
-| **Docker / compose** | packages the app and Ollama together for a one-command run |
-
-Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
-`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
-seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
-overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
-`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
-not a rewrite.
+### Model choices
 
 **Developed on a MacBook Air (Apple M1, 8 GB RAM).** And 8 GB is the *whole* budget, shared: the OS, the
 Streamlit app, the Chroma vector store, and Ollama serving **two** models (the LLM *and* the embedder) all
@@ -458,6 +439,28 @@ what a local-only stack costs.
 - **Embeddings — `nomic-embed-text`** (also via Ollama). Reusing the Ollama runtime for embeddings avoids
   pulling in torch / sentence-transformers — one local runtime serves both generation and retrieval,
   which keeps the install lean and the image small.
+
+---
+
+## Tech stack
+
+Each package does one job:
+
+| Package | Role |
+|---|---|
+| **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
+| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
+| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
+| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
+| **Docker / compose** | packages the app and Ollama together for a one-command run |
+
+Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
+`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
+seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
+overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
+`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
+not a rewrite. The two local models it runs (and *why* those two) are covered under
+[Model choices](#model-choices) above.
 
 ---
 
