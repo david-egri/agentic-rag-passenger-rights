@@ -237,15 +237,20 @@ detected, chunked by its structure, embedded, and indexed — no code changes.
 
 Three caveats about what this corpus — and the rules it encodes — does and doesn't cover:
 
-- **The 2025 reform is *not* encoded.** Reg. 261/2004 is being reformed (Council position June 2025;
-  Parliament TRAN committee October 2025) but isn't enacted yet. This corpus is the **current, in-force**
-  snapshot: the 3-hour threshold and the €250 / €400 / €600 bands. The proposed new thresholds are
-  deliberately left out.
+- **There's an upcoming reform.** Reg. 261/2004 is being reformed (Council position June 2025;
+  Parliament TRAN committee October 2025) but isn't enacted yet.
 - **Coverage is asymmetric.** Flights *leaving* the EU are covered on any airline; flights *into* the EU
-  are covered only on EU airlines. The system reflects this — and it's one of the two cases the eval
-  flags as still imperfect.
-- **Not legal advice.** General information only. For a real claim, check the official texts or talk to a
-  qualified adviser.
+  are covered only on EU airlines.
+- **One source is broader than the core.** The Your Europe plain-language summary covers air passenger
+  rights more generally than Reg. 261/2004's three disruption events, so retrieval can occasionally
+  surface a passage from it that strays a little beyond the regulation's strict scope.
+
+> **◆ Decision —** *The Your Europe summary's mild scope creep is known and kept as-is for now.* Its
+> plain-language phrasing is what lets retrieval match the colloquial way users actually ask, so it earns
+> its place; the occasional out-of-scope passage is an accepted limitation rather than something pruned.
+>
+> **Trade-off —** a little scope creep at the edges, kept in exchange for markedly better retrieval on
+> everyday-vocabulary questions — revisitable if the drift ever proves material.
 
 ---
 
