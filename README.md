@@ -638,14 +638,14 @@ coherent, self-contained provision rather than an arbitrary 512-token slice that
 loader is **generic and drop-in**: add a file to `data/corpus/`, re-run `python -m src.ingest`, and it's
 detected, chunked by its structure, embedded, and indexed — no code changes.
 
----
+### Caveats
 
-## Caveats
+Three caveats about what this corpus — and the rules it encodes — does and doesn't cover:
 
 - **The 2025 reform is *not* encoded.** Reg. 261/2004 is being reformed (Council position June 2025;
-  Parliament TRAN committee October 2025) but isn't enacted yet. This system targets the **current,
-  in-force rules**: the 3-hour threshold and the €250 / €400 / €600 bands. The proposed new thresholds
-  are deliberately left out.
+  Parliament TRAN committee October 2025) but isn't enacted yet. This corpus is the **current, in-force**
+  snapshot: the 3-hour threshold and the €250 / €400 / €600 bands. The proposed new thresholds are
+  deliberately left out.
 - **Coverage is asymmetric.** Flights *leaving* the EU are covered on any airline; flights *into* the EU
   are covered only on EU airlines. The system reflects this — and it's one of the two cases the eval
   flags as still imperfect.
