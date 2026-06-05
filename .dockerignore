@@ -1,0 +1,41 @@
+# Keep the build context tiny and the image clean. Anything not needed at runtime
+# stays out — smaller context = faster builds and no accidental bloat on a tight disk.
+
+# Derived vector store — rebuilt at runtime by the entrypoint (never bake a stale one in).
+data/chroma/
+
+# Local virtualenv + Python caches (the image installs deps fresh from requirements.txt).
+.venv/
+__pycache__/
+*.py[codz]
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Version control / project meta — not needed to run.
+.git/
+.gitignore
+.dockerignore
+
+# Docs & notes — design docs don't belong in the runtime image.
+# (NB: do NOT blanket-ignore *.md — data/corpus/plain_language_summary.md is corpus.)
+notes/
+DECISIONS.md
+PLAN.md
+CLAUDE.md
+README.md
+
+# Eval run artifacts (derived; results live in notes/).
+eval/last_run.json
+eval/loadtest_last.json
+
+# OS cruft / editor.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# The container build files themselves.
+Dockerfile
+docker-compose.yml

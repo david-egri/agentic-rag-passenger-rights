@@ -1,0 +1,27 @@
+{
+  "_comment": "Machine-readable provenance for citation metadata, keyed by corpus filename. Optional: ingestion falls back to sensible defaults (source = filename stem, retrieved_at = today, url = '') for any file without an entry, so dropping in a new document still indexes it. Human-readable companion + licensing: data/SOURCES.md.",
+  "reg_261_2004.html": {
+    "source": "Reg (EC) 261/2004",
+    "title": "Regulation (EC) No 261/2004 establishing common rules on compensation and assistance to air passengers",
+    "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32004R0261",
+    "retrieved_at": "2026-06-03"
+  },
+  "guidelines_2024.html": {
+    "source": "Commission Guidelines (2024)",
+    "title": "Commission Interpretative Guidelines on Regulation (EC) No 261/2004 (Commission Notice, OJ C/2024/5687, 25.9.2024)",
+    "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:C_202405687",
+    "retrieved_at": "2026-06-03"
+  },
+  "legissum_261_2004.html": {
+    "source": "EUR-Lex Summary (261/2004)",
+    "title": "EU air passenger rights in case of denied boarding, delay or cancellation — EUR-Lex legislative summary of Regulation (EC) No 261/2004",
+    "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=LEGISSUM:l24173",
+    "retrieved_at": "2026-06-03"
+  },
+  "plain_language_summary.md": {
+    "source": "EU Air Passenger Rights Summary",
+    "title": "Air passenger rights — official plain-language summary (Your Europe)",
+    "url": "https://europa.eu/youreurope/citizens/travel/passenger-rights/air/index_en.htm",
+    "retrieved_at": "2026-06-03"
+  }
+}

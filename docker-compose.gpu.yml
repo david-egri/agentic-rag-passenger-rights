@@ -1,0 +1,25 @@
+# Opt-in NVIDIA GPU acceleration for the in-container Ollama.
+#
+# GPU access is a *runtime* concern, not a build one — it never touches the Dockerfile.
+# It lives in this separate override (rather than the default compose) so that a plain
+# `docker compose up` keeps working on machines WITHOUT an NVIDIA GPU (a `gpus`/devices
+# reservation in the base file would make compose fail there — e.g. macOS, CPU-only Linux).
+#
+# Prereqs: an NVIDIA GPU + driver and the NVIDIA Container Toolkit installed on the host.
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+#
+# Usage (no file editing — just add the second -f):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Not applicable to Apple Silicon: a Linux container cannot reach the Metal GPU. On a Mac,
+# run Ollama natively instead (Quick start options 2 or 4).
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

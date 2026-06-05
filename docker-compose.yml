@@ -1,0 +1,63 @@
+# Two-container stack (earns the compose "multi-component" bonus):
+#   ollama — the local LLM + embedding server (official image, not built by us)
+#   app    — the whole solution (Streamlit UI + LangGraph agent + RAG + calculator)
+#
+# One command: `docker compose up`. First boot pulls ~2.2 GB of models and builds the
+# vector store once (both persisted in named volumes); later boots are fast.
+#
+# macOS fast path (Apple Silicon can't use the GPU from inside a Linux container, so the
+# in-container Ollama is CPU-only — measured ~5.5x slower end-to-end, see DECISIONS
+# `phase-7-docker`): run Ollama natively on the host and point the app at it — no rebuild,
+# just an env override:
+#   1) host:  ollama serve   (with qwen2.5:3b-instruct + nomic-embed-text pulled)
+#   2) OLLAMA_URL=http://host.docker.internal:11434 docker compose up --no-deps app
+# `--no-deps` skips the in-container `ollama` service (the app doesn't need it on this path).
+
+services:
+  ollama:
+    image: ollama/ollama:latest   # pin to your `ollama --version` for stricter reproducibility
+    volumes:
+      - ollama_models:/root/.ollama   # ~2.2 GB of models survive down/up
+    ports:
+      - "11434:11434"   # exposed for convenience (manual `ollama pull`, debugging)
+    healthcheck:
+      # `ollama list` exits non-zero until the server is actually answering — gates `app`.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 6g   # a 3B model has a real memory floor; tune to your machine
+    restart: unless-stopped
+
+  app:
+    image: parp-app:latest   # built from ./Dockerfile; reused if already present (no rebuild)
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # The one value Docker must change vs. local: reach Ollama by service name, not localhost.
+      # Interpolated with a default so it's overridable from the shell or a .env file — this is
+      # the seam that makes the host-Ollama fast path (above) a config flip, not a code change:
+      #   OLLAMA_URL=http://host.docker.internal:11434 docker compose up --no-deps app
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    # Make the host-Ollama fast path work on native Linux too: Docker Desktop (macOS/Windows)
+    # injects `host.docker.internal` automatically, but plain Linux Docker doesn't. `host-gateway`
+    # resolves to the host's bridge-gateway IP, recreating that name. Harmless/redundant on Desktop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8501:8501"   # Streamlit UI → http://localhost:8501
+    volumes:
+      - chroma_data:/app/data/chroma   # derived vector store; rebuilt by entrypoint if empty
+    depends_on:
+      ollama:
+        condition: service_healthy   # wait until Ollama is serving before we start
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  chroma_data:
