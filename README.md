@@ -3,8 +3,8 @@
 A chatbot that tells you what you're owed when a flight is delayed, cancelled, or overbooked inside the
 EU — and exactly how much, with the law to back it up. Under the hood it's a small **LangGraph
 agentic-RAG workflow**: a local LLM that *looks the rules up* by grounded retrieval and *works the amount
-out* with a deterministic calculator, guessing neither. And it stays simple to run — entirely on your own
-machine, no paid APIs, nothing leaving the box, up with one command (`docker compose up`).
+out* with a deterministic calculator, guessing neither. And it stays simple to run: entirely on your own
+machine, no paid APIs, nothing leaving the box, and up with a single command.
 
 > ⚖️ **Not legal advice.** Answers interpret Regulation (EC) No 261/2004 for general information only.
 
