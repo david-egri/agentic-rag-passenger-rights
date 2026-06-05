@@ -1,44 +1,54 @@
-# Agentic RAG — EU Air Passenger Rights (Reg. 261/2004)
+# Agentic RAG — EU Air Passenger Rights ✈️⚖️
 
-A chatbot that answers two kinds of question about EU air passenger rights: *"what am I entitled to?"*
-(answered from the actual law, always with a citation) and *"how much money do I get?"* (worked out by
-a calculator, not guessed by a model). It's built as a small LangGraph agentic workflow, runs entirely on
-your own machine with a local LLM, and the Streamlit UI lets you watch it think one step at a time.
-
-No paid APIs, no data leaving the box. The whole thing comes up with one command (`docker compose up`).
+A chatbot that tells you what you're owed when a flight is delayed, cancelled, or overbooked inside the
+EU — and exactly how much, with the law to back it up. Under the hood it's a small **LangGraph
+agentic-RAG workflow**: a local LLM that *looks the rules up* by grounded retrieval and *works the amount
+out* with a deterministic calculator, guessing neither. And it stays simple to run — entirely on your own
+machine, no paid APIs, nothing leaving the box, up with one command (`docker compose up`).
 
 > ⚖️ **Not legal advice.** Answers interpret Regulation (EC) No 261/2004 for general information only.
-> See [Caveats](#caveats).
+
+> **◆ Decision —** *Why this problem — EU flight-disruption compensation.* A real, everyday entitlement
+> that almost nobody claims, because the rules are fiddly and airlines are in no hurry to volunteer them.
+> The need is concrete and bounded: "tell me, in plain terms, what I'm owed and why."
+>
+> **Trade-off —** a narrow, well-defined domain instead of a broad travel assistant — which keeps the
+> corpus small and every answer checkable, at the cost of generality.
+
+> **◆ Decision —** *Why agentic RAG with a deterministic tool.* The question is half law, half
+> arithmetic: rights need grounded, citable retrieval, while the amount needs exact code rather than a
+> model's guess. A small agentic graph routes between the two, decomposes the "both" case, and grounds
+> the eligibility call in the regulation.
+>
+> **Trade-off —** more moving parts than a single chat prompt, bought as answers that are auditable
+> (every right cites the law) and exact (every euro comes from code).
 
 ---
 
 ## Scope & problem statement
 
-If your flight is cancelled or badly delayed inside the EU, the law (**Reg. 261/2004**) says you may
-be owed up to €600 — and almost nobody claims it. The rules are real but fiddly: the amount depends on
-how far you were flying and how late you arrived, and whether you get *anything* depends on whether the
-disruption was the airline's fault or an "extraordinary circumstance" like weather. Most people don't
-know the thresholds, and airlines aren't in a hurry to volunteer them. So there's a genuine, everyday
-need: *tell me, in plain terms, what I'm owed and why.*
+With that need established, the scope is narrow and deliberate. The system covers exactly one law —
+**Regulation (EC) No 261/2004**, the EU's rules on flight disruption — and is not a general travel
+assistant. That regulation governs three events:
 
-**Scope, narrowing from the top down.** This system is deliberately not a general travel assistant — it
-occupies one specific box, and it helps to see exactly which:
+- **denied boarding**
+- **delayed flight**
+- **cancelled flight**
 
-- **EU air passenger rights** — the broad field of EU consumer protection for air travel.
-  - **Regulation (EC) No 261/2004** (hereafter **Reg. 261/2004**) — the single in-force instrument this
-    system is built around. It does *not* cover everything about flying; it governs three **disruption
-    events**:
-    - **Denied boarding** (typically overbooking),
-    - **Cancellation**, and
-    - **Long delay** (the 3-hour-plus arrival-delay line drawn by the *Sturgeon* case law).
-  - For each of those events it defines the same set of remedies: **care/assistance** (meals, hotel),
-    **re-routing or refund**, and — the part everyone asks about — **cash compensation** of
-    **€250 / €400 / €600** by distance band.
+For each, it grants the same remedies:
 
-So when the EUR-Lex summary of this regulation is literally titled *"air passenger rights in case of denied
-boarding, delay or cancellation,"* that's the whole scope in one line. Everything outside that box —
-baggage fees, seat pricing, pets in the cabin, visas — is *not* this regulation's concern, and the system
-has to recognise that and decline rather than guess.
+- **care**
+- **re-routing**
+- **refund**
+- **cash compensation**
+
+Everything else about flying is out of scope — the system has to recognise that and decline rather than
+guess:
+
+- baggage fees
+- seat pricing
+- pets in the cabin
+- visas
 
 These are the kinds of real questions people actually ask — and they don't all want the same thing:
 
@@ -64,11 +74,7 @@ That need is a poor fit for a plain chatbot, for three reasons that end up shapi
 
 So the model needs help: retrieval to stay grounded, a calculator to get the number right, and some
 structure to keep it in its lane. That combination — an LLM given tools and retrieval — is the core of
-what's built here.
-
-### What it does
-
-Concretely, that comes out as four kinds of question you can ask — each answered a different way:
+what's built here, and it sorts those everyday questions into four kinds, each answered a different way:
 
 - **"What are my rights?"** → a plain-language answer grounded in the law, **with a citation** (which
   document, which article). If the law doesn't actually support an answer, it says so rather than bluff.
@@ -82,6 +88,37 @@ Concretely, that comes out as four kinds of question you can ask — each answer
 
 *How* it tells these apart and produces each answer is the [How it works](#how-it-works) section below;
 this is just what you get back.
+
+These four cases — and the shape of the problem behind them — are what drive the agentic design. Each
+core capability the system needs maps to something the problem itself demands:
+
+> **◆ Decision —** *Four question types → explicit conditional routing.* An intake step classifies each
+> question into one of the four lanes and a router sends it down the matching path — autonomous
+> decision-making over a fixed, predictable set of routes.
+>
+> **Trade-off —** routing can misread a borderline question, but the lanes overlap enough that the answer
+> stays correct, and a fixed route set is far easier to test than free-form tool choice.
+
+> **◆ Decision —** *The "how much?" half → a deterministic, non-retrieval tool.* The amount is pure
+> arithmetic over the law's distance bands and thresholds, so it lives in a model-free calculator — the
+> second tool alongside retrieval, and the one that isn't retrieval.
+>
+> **Trade-off —** the calculator must be fed clean inputs (airports, delay), but in return the figure
+> can't drift and doubles as the eval's ground truth.
+
+> **◆ Decision —** *Rights and eligibility → a modular RAG subgraph.* Both "what are my rights?" and the
+> "is this even compensable?" judgement need grounded, citable law, so retrieval is a dedicated
+> corrective-RAG subgraph callable from the main graph (and not counted among its nodes).
+>
+> **Trade-off —** a subgraph boundary to maintain, bought as grounding that flows through one reusable,
+> independently testable place.
+
+> **◆ Decision —** *The "both" question → decomposition into independent subtasks.* A mixed question fans
+> out into a rights/eligibility branch and a calculator branch that run independently and converge once —
+> decomposition and independent execution made literal, with intermediate results carried in typed state.
+>
+> **Trade-off —** the fan-out/fan-in wiring is more intricate than a sequential path, bought as genuine
+> parallel decomposition rather than an asserted one.
 
 ---
 
