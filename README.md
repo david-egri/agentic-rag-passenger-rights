@@ -442,7 +442,7 @@ what a local-only stack costs.
 
 ---
 
-## Tech stack
+## Tech stack & project structure
 
 Each package does one job:
 
@@ -461,6 +461,34 @@ overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the 
 `LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
 not a rewrite. The two local models it runs (and *why* those two) are covered under
 [Model choices](#model-choices) above.
+
+And here's where everything lives in the repo:
+
+```
+config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
+streamlit_app.py       # the UI (one tab per layer); ui_components.py = shared renderers
+src/
+  llm.py               # get_llm() behind the LLM_BACKEND seam
+  state.py             # the typed AgentState (+ append-only trace reducer)
+  graph.py             # the main 7-node graph + run_agent()
+  rag.py               # the compiled corrective-RAG subgraph
+  tools.py             # @tool retrieve_passenger_rights + @tool calculate_compensation
+  calculator.py        # pure, deterministic Art. 7 logic (haversine + band table)
+  ingest.py            # generic drop-in corpus loader → structure-aware chunkers → Chroma
+  store.py             # Chroma client + Ollama embeddings
+eval/                  # eval_set.yaml + functional_eval.py + loadtest.py
+tests/test_calculator.py
+docker/                # entrypoint.sh + prepare.py (wait for Ollama → pull models → ingest)
+Dockerfile  docker-compose.yml  .dockerignore
+data/corpus/           # the frozen legal corpus (committed); data/chroma/ is derived (gitignored)
+notes/                 # design proposal, decisions, eval results, review findings
+```
+
+One thing worth calling out: ingestion ([`src/ingest.py`](src/ingest.py)) is a **generic drop-in loader** —
+drop a file into `data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its
+structure, and indexed with no code changes. The fetching/parsing/chunking details (and *why* chunking
+follows the legal structure rather than fixed token windows) are in
+[Corpus & sources](#corpus--sources) below.
 
 ---
 
@@ -540,36 +568,6 @@ Same queries, same settings, host Metal GPU vs the CPU-only container: the in-co
 is only ~2.2× — the gap widens in practice because each query fires several model calls and the RAG step
 does a big context prefill, which is where CPU hurts most. That ~5.5× is the entire reason the host-Ollama
 paths (Quick start options 2 and 3) exist — and on a Mac they're the *only* way to get the GPU at all.
-
----
-
-## Project structure
-
-```
-config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
-streamlit_app.py       # the UI (one tab per layer); ui_components.py = shared renderers
-src/
-  llm.py               # get_llm() behind the LLM_BACKEND seam
-  state.py             # the typed AgentState (+ append-only trace reducer)
-  graph.py             # the main 7-node graph + run_agent()
-  rag.py               # the compiled corrective-RAG subgraph
-  tools.py             # @tool retrieve_passenger_rights + @tool calculate_compensation
-  calculator.py        # pure, deterministic Art. 7 logic (haversine + band table)
-  ingest.py            # generic drop-in corpus loader → structure-aware chunkers → Chroma
-  store.py             # Chroma client + Ollama embeddings
-eval/                  # eval_set.yaml + functional_eval.py + loadtest.py
-tests/test_calculator.py
-docker/                # entrypoint.sh + prepare.py (wait for Ollama → pull models → ingest)
-Dockerfile  docker-compose.yml  .dockerignore
-data/corpus/           # the frozen legal corpus (committed); data/chroma/ is derived (gitignored)
-notes/                 # design proposal, decisions, eval results, review findings
-```
-
-One thing worth calling out: ingestion ([`src/ingest.py`](src/ingest.py)) is a **generic drop-in loader** —
-drop a file into `data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its
-structure, and indexed with no code changes. The fetching/parsing/chunking details (and *why* chunking
-follows the legal structure rather than fixed token windows) are in
-[Corpus & sources](#corpus--sources) above.
 
 ---
 
