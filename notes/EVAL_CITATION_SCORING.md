@@ -1,10 +1,9 @@
-# Citation scoring for the Phase 6 functional eval
+# Citation scoring for the functional eval
 
-How the eval set should assert on **citations** — written during the Phase 5 review so the
-Phase 6 eval set (`eval/eval_set.yaml`) and runner are built with this baked in. Motivated by
-the sequencing realization that most eval ground truth is design-independent, but the
-**citation-level** ground truth couples to the corpus (see `notes/PHASE5_REVIEW_FINDINGS.md`,
-Group A).
+How the eval set should assert on **citations** — so the eval set (`eval/eval_set.yaml`) and
+runner are built with this baked in. Motivated by the realization that most eval ground truth
+is design-independent, but the **citation-level** ground truth couples to the corpus (the
+corpus-coupled improvements are tracked as GitHub issues).
 
 ---
 
@@ -101,5 +100,5 @@ baseline is meaningful before any citation-correctness exists.
   subset rather than every case.
 
 ## Sequencing rule (one line)
-Pin **presence** in the baseline now; pin **citation-correctness/grounding** only **after the
-corpus pass** (findings #1 + #2), and only for cases whose grounding doc changed.
+Pin **presence** in the baseline now; pin **citation-correctness/grounding** only **after any
+corpus changes** (see the GitHub issues), and only for cases whose grounding doc changed.

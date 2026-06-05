@@ -1,9 +1,9 @@
-# Phase 6 — Functional eval + load test results
+# Functional evaluation & load test results
 
-Methodology and recorded results for the Phase 6 deliverables. The eval set + runner are the
-**measurement instrument** (build-once, design-independent); the numbers below are the
-**baseline on the current design** (the corpus/code review findings are deferred to a later
-phase — DECISIONS `phase-6-eval-only` — so this baseline will be **re-run** after that phase).
+Methodology and recorded results for the functional evaluation and load test. The eval set +
+runner are the **measurement instrument** (build-once, design-independent); the numbers below
+are the **baseline on the current design** — the corpus/code improvements they point to are
+tracked as GitHub issues, and this baseline should be **re-run** after they land.
 
 Commands:
 ```bash
@@ -30,7 +30,7 @@ python -m eval.loadtest               # load test (50–200 queries) → timing/
 - **Scored dimensions** (only those a case pins): routing, eligibility, amount (the *gated*
   final figure), citation presence (guardrail), citation correctness (`any_of`,
   source + article, set-membership / recall).
-- **Known-fails** (the two Phase-5 spot-check findings) are scored like any case but reported
+- **Known-fails** (the two spot-check findings) are scored like any case but reported
   separately, so the baseline distinguishes a *documented gap* from a *new regression*.
 
 ### Baseline (2026-06-04, `qwen2.5:3b-instruct`, temperature 0)
@@ -45,12 +45,12 @@ python -m eval.loadtest               # load test (50–200 queries) → timing/
 
 - **Overall (excl. known-fails): 10/13 cases fully pass.**
 - **Known-fails: 3/3 dimensions failed exactly as documented** (scope-asymmetry routing;
-  ATC eligibility + amount) — both Phase-5 findings reproduce, confirming they're real and
+  ATC eligibility + amount) — both findings reproduce, confirming they're real and
   the eval set pins them.
 - Wall time ≈ 256 s for 15 cases (avg ≈ 17 s/case); out_of_scope cases are ≈ 2.5 s (fallback,
   no LLM generation) vs. ≈ 17–28 s for RAG/generation cases — first signal for the load test.
 
-### Findings from the baseline (carry into the review phase, do NOT fix in Phase 6)
+### Findings from the baseline (tracked as GitHub issues)
 
 **F-ROUTING — intake blurs rights_info / compensation_calc / mixed on a 3B model.** Every
 routing miss is the intake LLM pulling a query toward "compensation" whenever it mentions a
@@ -65,16 +65,15 @@ disruption **and** a money/refund word:
 
 *Impact is mostly cosmetic on correctness:* `compensation_calc` and `mixed` both run the
 eligibility branch, so **eligibility and amount stay correct even when misrouted** — the cost
-is the rights-paragraph / trace shape, not the numbers. This is the same intake weakness
-finding **#4 (structured-output consolidation)** targets; the review phase should re-measure
-routing after moving intake to `with_structured_output` + a Pydantic schema, and after the
-intake-prompt tweaks for scope/coverage questions (`SCOPE-ASYMMETRY-MISROUTE`) and ATC
-(`ATC-NOT-EXTRAORDINARY`).
+is the rights-paragraph / trace shape, not the numbers. This is the intake weakness the
+**structured-output intake** improvement targets (tracked as a GitHub issue):
+re-measure routing after moving intake to `with_structured_output` + a Pydantic schema, and
+after the intake-prompt tweaks for the scope-asymmetry and ATC blind spots.
 
 **F-SCOPE-FAILMODE — the scope-asymmetry misroute now lands on `mixed`, not `fallback`.**
-DECISIONS `spot-check-misroutes` recorded it routing to `out_of_scope → fallback`; at this
-baseline it routes to `mixed`. Still a routing failure, but the failure mode shifted — note it
-when fixing so the fix targets the right behaviour.
+An earlier spot-check recorded it routing to `out_of_scope → fallback`; at this baseline it
+routes to `mixed`. Still a routing failure, but the failure mode shifted — note it when fixing
+so the fix targets the right behaviour.
 
 ---
 
@@ -89,10 +88,9 @@ when fixing so the fix targets the right behaviour.
 - **Query pool** = the 15-case eval set, cycled round-robin to N (balanced route mix,
   reproducible — no randomness).
 - **Per-node timing** via LangGraph `stream_mode="debug"` (paired `task`/`task_result`
-  timestamps), layered *alongside* the semantic `trace`, not stuffed into it — the
-  `TRACE-VS-TIMING` plan (DECISIONS `trace-in-state`). The `rag` node's time bundles the whole
-  corrective-RAG subgraph (its internal retrieve/grade/generate aren't split out at the main-
-  graph level).
+  timestamps), layered *alongside* the semantic `trace` (which lives on `AgentState`), not
+  stuffed into it. The `rag` node's time bundles the whole corrective-RAG subgraph (its
+  internal retrieve/grade/generate aren't split out at the main-graph level).
 
 ### Results (N=50, 2026-06-04, `qwen2.5:3b-instruct`, temperature 0)
 
@@ -131,30 +129,29 @@ everything non-LLM is 0.22 s total (0.0%).** This confirms the CLAUDE.md predict
 
 **A — already in the design; the load test quantifies the payoff.** Three deliberate latency
 choices show up directly in the numbers:
-1. **Deterministic no-cause eligibility** (DECISIONS `eligibility-control-frame`): `eligibility`
+1. **Deterministic no-cause eligibility**: `eligibility`
    averaged **0.84 s/call** vs `intake`'s 4.27 s for a comparable single LLM call — because
    most calls skip the LLM. Roughly ¾ of the 40 calls took the deterministic path; making all
    40 LLM calls would add an estimated **~100 s** to the 50-run wall time.
-2. **LLM-free `synthesize`** (DECISIONS `synthesize-deterministic`): assembling the final
+2. **LLM-free `synthesize`**: assembling the final
    answer adds **0.02 s** total over 44 calls — a second generative pass here would have been
    another ~4 s × 44 ≈ ~175 s, and a fresh hallucination surface.
 3. **out_of_scope short-circuit to `fallback`** (no LLM): those runs complete in **2.47 s** vs
    the ~18 s mean — the router/fallback firewall is also a latency win.
 
-**B — recommended next lever (a graph change → defer to the review phase).** Since `rag` is
+**B — recommended next lever (a graph change).** Since `rag` is
 69% of the cost and a *pure* `compensation_calc` answer's amount is deterministic (calculator)
 and its eligibility is usually the no-cause deterministic path, the RAG subgraph on that route
 mainly produces *optional* citations (eval pins `required: false` for calc-only cases). Making
 the RAG branch **conditional** — skip it for pure `compensation_calc`, keep it for
 `rights_info`/`mixed` — would remove one ~14 s subgraph call from every calc query (a large
-share of realistic traffic). It's deferred because it's a **graph-wiring change** (touches
-`_route_from_router` + the eligibility branch's doc dependency + citation expectations), which
-belongs to the deferred code-review phase, not Phase 6's measurement scope (DECISIONS
-`phase-6-eval-only`). Projected impact: calc queries drop from ~18 s to ~4–5 s (intake +
-calculator + deterministic eligibility/synthesize). To be implemented and **re-measured** with
-this same load test in the review phase.
+share of realistic traffic). It's a **graph-wiring change** (touches `_route_from_router` +
+the eligibility branch's doc dependency + citation expectations) beyond this measurement's
+scope, tracked as a GitHub issue. Projected impact: calc queries drop from
+~18 s to ~4–5 s (intake + calculator + deterministic eligibility/synthesize). To be
+implemented and **re-measured** with this same load test.
 
-_(A secondary lever — moving `intake` to `with_structured_output`, finding #4 — is primarily a
+_(A secondary lever — moving `intake` to `with_structured_output` — is primarily a
 **correctness** fix for `F-ROUTING`, not latency; noted in §1.)_
 
 ---
@@ -210,6 +207,6 @@ on off-topic questions). The load test confirmed they save real time.
 
 > **One line:** to make it more accurate, force the model to fill in a structured form and give
 > it examples of the cases it misses; to make it faster, skip the expensive law-reading step for
-> pure money questions. All of these are **code changes saved for the next review phase** —
-> Phase 6 only measured, and it gave us the exact targets.
+> pure money questions. All of these are **code changes tracked as GitHub issues** —
+> this round only measured, and it gave us the exact targets.
 
