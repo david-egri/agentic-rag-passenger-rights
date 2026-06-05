@@ -43,7 +43,9 @@ env-var overrides. Read them through `config.py` — don't hardcode knobs at cal
 
 - **Orchestration:** LangGraph — a main graph plus a separate compiled RAG subgraph
 - **Vector store:** ChromaDB (persisted at `data/chroma/`, rebuilt from the corpus)
-- **Embeddings:** `sentence-transformers` — `BAAI/bge-small-en-v1.5` (fallback `all-MiniLM-L6-v2`)
+- **Embeddings:** `nomic-embed-text` via Ollama — reuses the local Ollama server, so no
+  `torch`/`sentence-transformers` dependency. Needs task prefixes (`search_document:` /
+  `search_query:`, applied in `src/store.py`); the model is set by `EMBEDDING_MODEL` in `config.py`.
 - **LLM:** `qwen2.5:3b-instruct` via Ollama (pinned for constrained hardware; good at structured
   output). `llama3.2:3b` is a noted alternative. Accessed through a pluggable `LLM_BACKEND` seam.
 - **UI:** Streamlit
