@@ -438,56 +438,6 @@ what a local-only stack costs.
 
 ---
 
-## Tech stack & project structure
-
-Each package does one job:
-
-| Package | Role |
-|---|---|
-| **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
-| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
-| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
-| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
-| **Docker / compose** | packages the app and Ollama together for a one-command run |
-
-Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
-`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
-seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
-overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
-`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
-not a rewrite. The two local models it runs (and *why* those two) are covered under
-[Model choices](#model-choices) above.
-
-And here's where everything lives in the repo:
-
-```
-config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
-streamlit_app.py       # the UI (one tab per layer); ui_components.py = shared renderers
-src/
-  llm.py               # get_llm() behind the LLM_BACKEND seam
-  state.py             # the typed AgentState (+ append-only trace reducer)
-  graph.py             # the main 7-node graph + run_agent()
-  rag.py               # the compiled corrective-RAG subgraph
-  tools.py             # @tool retrieve_passenger_rights + @tool calculate_compensation
-  calculator.py        # pure, deterministic Art. 7 logic (haversine + band table)
-  ingest.py            # generic drop-in corpus loader → structure-aware chunkers → Chroma
-  store.py             # Chroma client + Ollama embeddings
-eval/                  # eval_set.yaml + functional_eval.py + loadtest.py
-tests/test_calculator.py
-docker/                # entrypoint.sh + prepare.py (wait for Ollama → pull models → ingest)
-Dockerfile  docker-compose.yml  .dockerignore
-data/corpus/           # the frozen legal corpus (committed); data/chroma/ is derived (gitignored)
-notes/                 # design proposal, decisions, eval results, review findings
-```
-
-One thing worth calling out: ingestion ([`src/ingest.py`](src/ingest.py)) is a **generic drop-in loader** —
-drop a file into `data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its
-structure, and indexed with no code changes. The fetching/parsing/chunking details (and *why* chunking
-follows the legal structure rather than fixed token windows) are in
-[Corpus & sources](#corpus--sources) below.
-
----
-
 ## Evaluation & performance
 
 The short version is below; full methodology and numbers are in
@@ -648,3 +598,53 @@ Three caveats about what this corpus — and the rules it encodes — does and d
   flags as still imperfect.
 - **Not legal advice.** General information only. For a real claim, check the official texts or talk to a
   qualified adviser.
+
+---
+
+## Tech stack & project structure
+
+Each package does one job:
+
+| Package | Role |
+|---|---|
+| **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
+| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
+| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
+| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
+| **Docker / compose** | packages the app and Ollama together for a one-command run |
+
+Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
+`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
+seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
+overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
+`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
+not a rewrite. The two local models it runs (and *why* those two) are covered under
+[Model choices](#model-choices) above.
+
+And here's where everything lives in the repo:
+
+```
+config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
+streamlit_app.py       # the UI (one tab per layer); ui_components.py = shared renderers
+src/
+  llm.py               # get_llm() behind the LLM_BACKEND seam
+  state.py             # the typed AgentState (+ append-only trace reducer)
+  graph.py             # the main 7-node graph + run_agent()
+  rag.py               # the compiled corrective-RAG subgraph
+  tools.py             # @tool retrieve_passenger_rights + @tool calculate_compensation
+  calculator.py        # pure, deterministic Art. 7 logic (haversine + band table)
+  ingest.py            # generic drop-in corpus loader → structure-aware chunkers → Chroma
+  store.py             # Chroma client + Ollama embeddings
+eval/                  # eval_set.yaml + functional_eval.py + loadtest.py
+tests/test_calculator.py
+docker/                # entrypoint.sh + prepare.py (wait for Ollama → pull models → ingest)
+Dockerfile  docker-compose.yml  .dockerignore
+data/corpus/           # the frozen legal corpus (committed); data/chroma/ is derived (gitignored)
+notes/                 # design proposal, decisions, eval results, review findings
+```
+
+One thing worth calling out: ingestion ([`src/ingest.py`](src/ingest.py)) is a **generic drop-in loader** —
+drop a file into `data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its
+structure, and indexed with no code changes. The fetching/parsing/chunking details (and *why* chunking
+follows the legal structure rather than fixed token windows) are in
+[Corpus & sources](#corpus--sources) above.
