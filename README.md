@@ -50,7 +50,8 @@ guess:
 - pets in the cabin
 - visas
 
-These are the kinds of real questions people actually ask — and they don't all want the same thing:
+The objective, then, is to answer the real-life questions people actually ask about this — which don't
+all want the same thing:
 
 - *"Can I get a refund if my flight is cancelled?"*
 - *"My flight is delayed by 5 hours — am I entitled to meals and a hotel?"*
@@ -60,7 +61,8 @@ These are the kinds of real questions people actually ask — and they don't all
 - *"Am I covered flying from New York to Paris on a US airline?"*
 - *"Can I bring my dog in the cabin?"* — and the system has to know this one **isn't** its job.
 
-That need is a poor fit for a plain chatbot, for three reasons that end up shaping the whole design:
+Step back from these examples and a general insight emerges: this need is a poor fit for a plain chatbot,
+for three reasons:
 
 - **Grounded in the law.** Answers about your rights come from the actual regulation, with a citation —
   not the model's memory, which you can't audit.
@@ -72,7 +74,7 @@ That need is a poor fit for a plain chatbot, for three reasons that end up shapi
 Put together, those three needs point to three pieces:
 
 - **RAG** to stay grounded in the law
-- a **calculator tool**, deterministic, to get the number right
+- **calculator tool** to get the number right deterministically
 - **conditional routing** to keep each question in its lane
 
 The routing comes first — it sorts every question into one of four kinds, each handled a different way:
@@ -90,8 +92,8 @@ The third case — **"What am I owed *and* why?"** — needs more than a single 
 subtasks, looking up the rights and computing the amount, that can run independently and then be combined.
 That's subtask decomposition and independent execution, again surfacing straight from the domain.
 
-Taken together, these domain insights define the architecture that follows — each capability the problem
-demands maps onto a concrete piece of the design:
+Taken together, these domain insights define the architecture that follows — each one becomes a concrete
+piece of the design:
 
 > **◆ Decision —** *Four question types → explicit conditional routing.* An intake step classifies each
 > question into one of the four lanes and a router sends it down the matching path — autonomous
@@ -140,8 +142,11 @@ demands maps onto a concrete piece of the design:
 
 Everything here answers questions about **Reg. 261/2004**, so the corpus is built *around the regulation
 as the core*, with a few supporting documents that make that core usable. There are two distinct bodies of
-data — the **RAG corpus** (retrieved and cited as law) and the **airport reference data** (used only by
-the calculator) — and they're kept deliberately separate.
+data, kept deliberately separate:
+
+- **RAG corpus** — retrieved and cited as law
+- **airport reference data** — used only by the calculator, which needs airport coordinates to compute
+  the travel distance the compensation band depends on
 
 ### The RAG corpus — what retrieval reads over
 
