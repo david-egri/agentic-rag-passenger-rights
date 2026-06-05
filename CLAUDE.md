@@ -1,170 +1,177 @@
 # CLAUDE.md
 
-Operational guide for working on this repo with Claude Code — conventions, commands, and the
-non-negotiables. See `README.md` for the full design rationale, architecture walkthrough, and
-the justification behind each decision.
+Working context for anyone — human or AI agent — developing in this repository. It covers what
+the project is, how to run it, the constraints that must hold, and the conventions to follow.
+For the full design rationale, architecture walkthrough, and install guide, see `README.md`;
+this file is the concise operational companion to it.
 
 ---
 
-## What this project is
+## Project overview
 
-An **Agentic RAG chatbot** (Python + **LangGraph**) for **EU air passenger rights**
-(Regulation (EC) No 261/2004). It (a) answers questions about passenger rights using grounded
-retrieval and (b) computes flight-disruption compensation using a deterministic calculator
-tool. UI is **Streamlit**; everything runs locally and is containerized.
+An **agentic RAG chatbot** (Python + **LangGraph**) for **EU air passenger rights**
+(Regulation (EC) No 261/2004). It does two things:
 
-This is a small, clean, reproducible, well-documented prototype — optimize for that, not
-breadth. "Quality processing, not quantity."
+- **Answers passenger-rights questions** via grounded retrieval — every answer is built from
+  retrieved legal text and carries citations.
+- **Computes flight-disruption compensation** with a deterministic, non-LLM calculator tool.
 
----
-
-## Non-negotiables (do not violate)
-
-1. **No paid APIs at runtime.** The LLM runs locally via **Ollama**. Never add an
-   OpenAI/Anthropic/etc. paid client to the running app. Keep the backend behind the pluggable
-   `LLM_BACKEND` seam in `src/llm.py` — nodes call a single `get_llm()` abstraction.
-2. **Anchor to the in-force rules.** Use the **current** Reg. 261/2004 figures (3-hour
-   threshold; €250 / €400 / €600 distance bands). The 2025 reform is **not enacted** — do not
-   encode proposed thresholds. Note the pending reform only as a README caveat.
-3. **Ground everything; cite always.** Rights answers come *only* from retrieved chunks and
-   must carry citations (source + article). If retrieval doesn't support an answer, say so —
-   never fabricate.
-4. **Out-of-scope → fallback.** Questions outside Reg. 261/2004 (baggage fees, pets, visas,
-   airline pricing) must route to the fallback node, not get a made-up answer.
-5. **"Not legal advice" disclaimer** on every answer that interprets the rules.
-6. **The calculator is deterministic and LLM-free.** No model calls inside
-   `calculate_compensation`. Its output is also eval ground truth, so keep it pure.
-7. **Reproducibility.** Pin versions, set `temperature=0` and fixed seeds where supported, keep
-   ingestion idempotent, commit the frozen corpus snapshot.
-
----
-
-## Tech stack
-
-- **Orchestration:** LangGraph (main graph + a separate compiled RAG subgraph)
-- **Vector store:** ChromaDB (persisted at `data/chroma/`)
-- **Embeddings:** `sentence-transformers` — `BAAI/bge-small-en-v1.5` (fallback `all-MiniLM-L6-v2`)
-- **LLM:** **`qwen2.5:3b-instruct`** via Ollama — pinned default for constrained hardware, good
-  at structured/JSON output; `llama3.2:3b` is the noted alternative. Behind a pluggable
-  `LLM_BACKEND` seam.
-- **UI:** Streamlit
-- **Runtime/env:** Python **3.14** (pinned via `.python-version`), isolated with stdlib
-  **`venv`**, deps pinned in `requirements.txt` (no Poetry/conda/uv)
-- **Container:** Docker base `python:3.14-slim` (+ docker-compose for app + ollama)
+Everything runs locally (LLM via **Ollama**), with a **Streamlit** UI and Docker packaging. The
+codebase favours a small, readable, reproducible footprint over breadth.
 
 ---
 
 ## Commands
-
-No Make — run plain, documented commands (keep them in sync with the README):
 
 ```bash
 python3.14 -m venv .venv && . .venv/bin/activate   # one-time: create + activate the env
 pip install -r requirements.txt          # install pinned deps
 python -m src.ingest                      # parse + chunk + embed corpus -> ChromaDB (idempotent)
 streamlit run streamlit_app.py            # launch the Streamlit UI
-python -m eval.functional_eval            # run functional eval over eval/eval_set.yaml
-python -m eval.loadtest                   # run the 50-200 query load test
-pytest tests/test_calculator.py           # the one classic-test exception (deterministic calculator)
+python -m eval.functional_eval            # functional eval over eval/eval_set.yaml
+python -m eval.loadtest                   # load test (50–200 queries) with per-node timing
+pytest tests/test_calculator.py           # unit tests for the deterministic calculator
 docker compose up                         # app + ollama end-to-end
 ```
 
-Backend: `LLM_BACKEND=ollama` (the only one wired; the seam allows adding others). Configure
-model names, Ollama URL, and top-k in `config.py` / env — never hardcode.
+All tunables (model names, Ollama URL, top-k, retry caps) live in `config.py` as constants with
+env-var overrides. Read them through `config.py` — don't hardcode knobs at call sites.
 
 ---
 
-## Architecture quick reference
+## Tech stack
 
-**State** (`src/state.py`): typed `AgentState` carrying `user_query`, `query_type`,
+- **Orchestration:** LangGraph — a main graph plus a separate compiled RAG subgraph
+- **Vector store:** ChromaDB (persisted at `data/chroma/`, rebuilt from the corpus)
+- **Embeddings:** `sentence-transformers` — `BAAI/bge-small-en-v1.5` (fallback `all-MiniLM-L6-v2`)
+- **LLM:** `qwen2.5:3b-instruct` via Ollama (pinned for constrained hardware; good at structured
+  output). `llama3.2:3b` is a noted alternative. Accessed through a pluggable `LLM_BACKEND` seam.
+- **UI:** Streamlit
+- **Runtime:** Python 3.14 (pinned via `.python-version`), stdlib `venv`, deps pinned in
+  `requirements.txt` (no Poetry/conda/uv)
+- **Container:** Docker base `python:3.14-slim` (+ docker-compose for app + Ollama)
+
+---
+
+## Architecture
+
+**State** (`src/state.py`): a typed `AgentState` carrying `user_query`, `query_type`,
 `flight_details`, `subtasks`, `retrieved_docs`, `rag_answer`, `rag_citations`, `eligibility`,
-`calc_result`, `final_answer`, and `trace` (per-node log for the UI).
+`calc_result`, `final_answer`, and `trace` (a per-node log surfaced in the UI).
 
-**Main graph** (`src/graph.py`) — 7 nodes:
-1. `intake` — extract flight entities + classify intent (structured JSON out)
-2. `router` — conditional routing on `query_type` (rights_info / compensation_calc / mixed / out_of_scope)
+**Main graph** (`src/graph.py`) — the control flow, as explicit nodes:
+
+1. `intake` — extract flight entities + classify intent (structured output)
+2. `router` — branch on `query_type`: `rights_info` / `compensation_calc` / `mixed` / `out_of_scope`
 3. `planner` — decompose `mixed` queries into subtasks
-4. `eligibility` — autonomous decision: is the disruption compensable? (extraordinary-circumstances logic)
-5. `calculator` — calls the non-retrieval compensation tool
+4. `eligibility` — decide whether the disruption is compensable (extraordinary-circumstances logic)
+5. `calculator` — invoke the deterministic compensation tool
 6. `synthesize` — merge rights answer + amount + citations + disclaimer
-7. `fallback` — out-of-scope handling (hallucination firewall)
+7. `fallback` — out-of-scope handling (the hallucination firewall)
 
-**RAG subgraph** (`src/rag.py`) — modular, compiled `StateGraph` added via `add_node` (does
-**not** count toward the 5); corrective RAG:
-`retrieve → grade_documents → (relevant? generate : rewrite_query → retrieve)` with a
-**bounded** rewrite loop (max 1–2 retries).
+**RAG subgraph** (`src/rag.py`): a modular, separately compiled `StateGraph` added to the main
+graph as a node. Corrective RAG —
+`retrieve → grade_documents → (relevant? generate : rewrite_query → retrieve)` — with a
+**bounded** rewrite loop. The grade→rewrite loop is the most genuinely agentic part of the system.
 
-**Tools** (`src/tools.py`) — both are explicit LangChain `@tool`s:
-- `retrieve_passenger_rights(query)` — retrieval (used in the subgraph)
+**Tools** (`src/tools.py`), both explicit LangChain `@tool`s:
+
+- `retrieve_passenger_rights(query)` — retrieval (used inside the RAG subgraph)
 - `calculate_compensation(origin_iata, dest_iata, delay_hours, disruption_type, rerouting_offered=False)`
-  — **non-retrieval**: haversine distance from OpenFlights coords → band → amount → apply 3h
-  threshold + 50% reduction rule
+  — non-retrieval: haversine distance from OpenFlights coords → distance band → amount, then the
+  3-hour threshold and 50% reduction rules
 
-**Mixed-query path** is a real fan-out → fan-in: `mixed` decomposes into a RAG/eligibility
-branch and a calculator branch that run as independent parallel branches and converge at
-`synthesize`.
+**Mixed queries** run as a real fan-out → fan-in: a RAG/eligibility branch and a calculator
+branch execute as independent parallel branches and converge at `synthesize`.
 
-This is a **directed/structured agent** (the graph governs control flow) rather than an
-open-ended planner — a deliberate trade-off of predictability and testability over open-ended
-autonomy. The corrective-RAG grade→rewrite loop is the most defensibly "agentic" part.
+This is a **directed/structured agent** — the graph governs control flow rather than letting the
+model freely choose tools. That's a deliberate trade-off: predictability and testability over
+open-ended autonomy.
+
+---
+
+## Core constraints (keep these true)
+
+Load-bearing invariants. Don't break one unless the change is *explicitly* meant to revise it —
+and update this file if so.
+
+1. **Local-only LLM.** The running app uses a local model via Ollama; never wire in a paid
+   API client. Keep model access behind the `LLM_BACKEND` seam in `src/llm.py` (nodes call a
+   single `get_llm()` abstraction).
+2. **Anchor to the in-force law.** Use current Reg. 261/2004 figures (3-hour threshold;
+   €250 / €400 / €600 distance bands). Don't encode the not-yet-enacted 2025 reform; mention it
+   only as a README caveat.
+3. **Ground and cite.** Rights answers come only from retrieved chunks and must carry citations
+   (source + article). If retrieval doesn't support an answer, say so — never fabricate.
+4. **Out-of-scope routes to fallback.** Questions beyond Reg. 261/2004 (baggage, pets, visas,
+   pricing) go to the fallback node, not a made-up answer.
+5. **Disclaimer.** Every answer that interprets the rules carries a "not legal advice" note.
+6. **The calculator is deterministic and LLM-free.** No model calls inside
+   `calculate_compensation`; its output doubles as eval ground truth, so keep it pure.
+7. **Reproducibility.** Pin versions, set `temperature=0` and fixed seeds where supported, keep
+   ingestion idempotent, and commit the frozen corpus snapshot.
 
 ---
 
 ## Conventions
 
-- **Least ceremony that meets the requirement.** Prefer the simplest construct that does the
-  job: module-level constants and plain functions over config frameworks or factory
-  indirection; **flat modules** (`src/tools.py`, `src/rag.py`, `src/ingest.py`) over nested
-  packages until a module genuinely earns splitting. Introduce abstraction when a second real
-  case appears, not in anticipation. **This never applies to the required agent
-  architecture:** the ≥5-node graph, the typed `AgentState`, the compiled RAG subgraph, and
-  the explicit `@tool`s are *requirements*, not ceremony — keep them.
-- **Ingestion is a generic, drop-in directory loader.** Drop a file into `data/corpus/` →
-  detect type → apply the right chunker → re-run ingestion → indexed, with no code changes.
+- **Least ceremony that meets the need.** Prefer the simplest construct: module-level constants
+  and plain functions over config frameworks or factory indirection; **flat modules**
+  (`src/tools.py`, `src/rag.py`, `src/ingest.py`) over nested packages until a module earns
+  splitting. Add abstraction when a second real case appears, not in anticipation. (The core
+  agent architecture — the multi-node graph, typed `AgentState`, compiled RAG subgraph, and
+  explicit `@tool`s — is intentional structure; don't collapse it in the name of simplicity.)
+- **Generic, drop-in ingestion.** Dropping a file into `data/corpus/` and re-running ingestion
+  should index it — detect type → apply the right chunker → embed — with no code changes.
 - **Chunk by legal structure** (Article / Recital), not fixed token windows; sub-split only
   oversized articles by paragraph with small overlap. Attach metadata (`source`, `article`,
   `title`, `url`, `retrieved_at`, `chunk_id`) to every chunk.
-- **Citations reference metadata**, never raw chunk text dumps.
-- **Config over hardcoding** — all knobs in `config.py` (constants + env override).
-- **Bounded loops** — cap the corrective-RAG rewrite retries to keep latency sane.
+- **Citations reference metadata**, never raw chunk-text dumps.
+- **Config over hardcoding** — every knob in `config.py`, env-overridable.
+- **Bounded loops** — cap the corrective-RAG rewrite retries to keep latency predictable.
 - **Stream the graph** in Streamlit (`graph.stream`) and append each node's output to the
-  `trace` panel so the user watches the agent work.
-- **Run independent subtasks concurrently** for `mixed` queries where practical.
-- **Repo hygiene.** Commit the frozen corpus snapshot (`data/corpus/`); **gitignore**
-  `data/chroma/` (rebuilt from the corpus via idempotent ingest), `.venv/`, `__pycache__/`,
-  `*.pyc`. Only the corpus is the source of truth — the vector store is a derived artifact.
+  `trace` panel, so the agent's steps are visible.
+- **Repo hygiene.** Commit the frozen corpus (`data/corpus/`); gitignore `data/chroma/` (a
+  derived artifact, rebuilt by ingestion), `.venv/`, `__pycache__/`, `*.pyc`. The corpus is the
+  source of truth; the vector store is regenerated from it.
 
 ---
 
-## Gotchas / verify before trusting
+## Making changes safely
 
-- **Recompute example distances** with real OpenFlights coords before fixing eval ground truth
-  — routes near a band boundary (e.g. ~1500 km) can flip the expected amount. A wrong
-  "expected" value is worse than none.
-- **OpenFlights data is ODbL** — attribute it in `data/SOURCES.md`. EUR-Lex content is
+- **The functional eval is the regression harness.** Run `python -m eval.functional_eval` after
+  any behavioural change. Its ground truth is anchored to Reg. 261/2004 correctness (not to
+  current output), so it stays valid across refactors.
+- **The calculator has unit tests** (`pytest tests/test_calculator.py`). Keep it deterministic
+  and LLM-free; when you change rules or bands, recompute expected amounts from real coordinates
+  before updating ground truth.
+- **Re-ingest after corpus changes** (`python -m src.ingest`) — it's idempotent. Don't commit
+  `data/chroma/`; it's rebuilt.
+- **Keep this file current.** When a convention or constraint changes, update CLAUDE.md in the
+  same change.
+
+---
+
+## Domain gotchas (verify before trusting)
+
+- **Recompute example distances** from real OpenFlights coordinates before pinning eval ground
+  truth — routes near a band boundary (~1500 km) can flip the expected amount. A wrong "expected"
+  value is worse than none.
+- **EU261 route scope is asymmetric**: EU-departing flights are covered on any carrier; non-EU →
+  EU is covered only on EU carriers. `eligibility`/RAG must reflect this.
+- **Own-airline staff strike is *not* extraordinary** (compensation due); weather / ATC /
+  security generally *are* extraordinary (no compensation, though care/rerouting may still apply).
+- **The latency bottleneck is local-LLM generation** (plus the rewrite loop) — vector search and
+  the calculator are negligible. Confirmed by per-node timing in `notes/EVAL_RESULTS.md`.
+- **Licensing:** OpenFlights data is ODbL (attribute it in `data/SOURCES.md`); EUR-Lex content is
   reusable with source acknowledgment.
-- **EU261 route scope is asymmetric**: EU-departing flights (any carrier) are covered; non-EU →
-  EU is covered only on EU carriers. Make sure `eligibility`/RAG reflects this.
-- **Own-airline staff strike ≠ extraordinary** (compensation due); weather/ATC/security
-  generally are extraordinary (no compensation, but care/rerouting may apply).
-- **Load-test bottleneck is local LLM generation** (plus the rewrite loop) — the calculator and
-  vector search are negligible. Confirmed via per-node timing in `notes/EVAL_RESULTS.md`.
 
 ---
 
 ## Reference docs
 
-- `README.md` — the full design rationale, architecture, and run/install guide.
+- `README.md` — full design rationale, architecture, and run/install guide.
 - `notes/EVAL_RESULTS.md` — functional-eval + load-test methodology and baseline numbers.
 - `notes/EVAL_CITATION_SCORING.md` — how the eval set asserts on citations.
-- [GitHub Issues](https://github.com/david-egri/agentic-rag-passenger-rights/issues) — open backlog and known limitations (filed as labelled issues).
 - `data/SOURCES.md` — corpus + airport-data provenance and licensing.
-
----
-
-## Definition of done
-
-≥5 nodes with conditional routing, decomposition, typed state, ≥2 tools (≥1 non-retrieval),
-modular RAG subgraph not counted in the 5, structure-aware corpus processing with citations,
-local LLM (Ollama), Streamlit UI showing agent steps, Dockerfile (+ compose), functional eval
-+ load test with bottleneck analysis, and a complete reproducible README.
+- **GitHub Issues** — open backlog and known limitations, filed as labelled issues.
