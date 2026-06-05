@@ -62,20 +62,23 @@ all want the same thing:
 - *"Can I bring my dog in the cabin?"* — and the system has to know this one **isn't** its job.
 
 Step back from these examples and a general insight emerges: this need is a poor fit for a plain chatbot,
-for three reasons:
+for four reasons:
 
 - **Grounded in the law.** Answers about your rights come from the actual regulation, with a citation —
   not the model's memory, which you can't audit.
 - **Exact by construction.** The compensation amount is arithmetic, and a small model will sometimes
   invent it, so it comes from real code rather than the model.
+- **Not one-size-fits-all.** The questions don't all want the same thing — rights, an amount, both, or
+  nothing in scope — so one path can't serve them.
 - **Knows its lane.** Many questions fall outside this regulation; the system should recognise those and
   decline rather than guess.
 
-Put together, those three needs point to three pieces:
+Put together, those four needs point to four pieces:
 
 - **RAG** to stay grounded in the law
 - **calculator tool** to get the number right deterministically
-- **conditional routing** to keep each question in its lane
+- **conditional routing** to send each question down the right path
+- **out-of-scope firewall** to decline what isn't covered
 
 The routing comes first — it sorts every question into one of four kinds, each handled a different way:
 
