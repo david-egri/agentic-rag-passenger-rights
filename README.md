@@ -153,17 +153,23 @@ data, kept deliberately separate:
 
 ### RAG corpus
 
-A **frozen, dated snapshot** committed under `data/corpus/` — the single source of truth. The ChromaDB
-index is a **derived artifact** (gitignored), rebuilt from the corpus by an **idempotent**
-`python -m src.ingest`, so a fresh clone reproduces the *identical* index offline with no network access.
-Four documents, each playing a distinct role *relative to the core law*:
+There are two artifacts here, kept deliberately distinct:
 
-| Document | Role relative to the core | Source |
-|----------|---------------------------|--------|
-| **Regulation (EC) No 261/2004** — full text | **The core**: the binding legal text itself | [EUR-Lex · CELEX 32004R0261](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32004R0261) |
-| **Commission Interpretative Guidelines (2024)** | How the Commission *reads* the text — fills gaps the bare articles leave (e.g. what counts as "extraordinary"), incorporating CJEU case law | [OJ C/2024/5687](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:C_202405687) |
-| **EUR-Lex legislative summary** | A neutral, structured *overview* of the regulation — a good retrieval target for "what does it cover" questions | [LEGISSUM:l24173](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=LEGISSUM:l24173) |
-| **Your Europe plain-language summary** | The same rights in *plain language* — matches how real users actually phrase questions, which improves retrieval | [Your Europe](https://europa.eu/youreurope/citizens/travel/passenger-rights/air/index_en.htm) |
+- **the corpus** (`data/corpus/`) — a **frozen, dated snapshot** committed to git: the single source of
+  truth.
+- **the vector index** (`data/chroma/`) — a **derived artifact** (gitignored), rebuilt from the corpus by
+  an **idempotent** `python -m src.ingest`.
+
+Because the index is rebuilt rather than stored, a fresh clone reproduces the *identical* index offline,
+with no network access. The corpus itself is four documents, each playing a distinct role *relative to the
+core law*:
+
+| Document | What it is |
+|----------|------------|
+| [**The regulation**](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32004R0261) | The binding law — the core that everything else supports. |
+| [**Official interpretation guidelines**](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:C_202405687) | How the Commission reads the law in practice — fills the gaps the bare articles leave. |
+| [**Summary of the regulation**](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=LEGISSUM:l24173) | A neutral, organized summary of what the regulation covers — a good match for "what does it cover?" questions. |
+| [**Plain-language guide for citizens**](https://europa.eu/youreurope/citizens/travel/passenger-rights/air/index_en.htm) | The same rights in everyday words — matches how real people phrase questions, which helps retrieval. |
 
 **Why anything beyond the regulation itself?** The bare legal text is necessary but not sufficient: it's
 terse, heavily cross-referential, and silent on much of the interpretation people actually need (the
@@ -195,13 +201,16 @@ Full per-file licensing, provenance, and fetch methods live in [`data/SOURCES.md
 Two things made ingestion genuinely non-trivial, and both shaped the design:
 
 **Fetching was actively blocked.** The EUR-Lex web UI sits behind an AWS WAF that silently challenges
-`curl`, so the obvious "just download the page" approach fails. The regulation and the 2024 guidelines were
-instead pulled as structured (X)HTML from the Publications Office **Cellar REST API** (HTTP content
-negotiation), which serves the same authoritative text without the WAF challenge; the legislative summary
-came from the EUR-Lex **TXT/HTML export endpoint** via Python `requests` (whose default client passes
-where `curl` is blocked); the Your Europe page was reduced to its `<main>` content and frozen as Markdown.
+`curl`, so the obvious "just download the page" approach fails. Each source needed its own way in:
+
+- **Regulation + 2024 guidelines** — pulled as structured (X)HTML from the Publications Office **Cellar
+  REST API** (HTTP content negotiation), which serves the same authoritative text without the WAF challenge.
+- **Legislative summary** — fetched from the EUR-Lex **TXT/HTML export endpoint** via Python `requests`,
+  whose default client passes where `curl` is blocked.
+- **Your Europe page** — reduced to its `<main>` content and frozen as Markdown.
+
 This is also *why the corpus is committed frozen* rather than fetched at build time — re-fetching is
-brittle and reproducibility shouldn't depend on a WAF's mood.
+brittle, and reproducibility shouldn't depend on a WAF's mood.
 
 > **◆ Decision —** *Freeze and commit the corpus; treat the index as derived.* `data/corpus/` is a
 > dated snapshot in git, while the ChromaDB index is gitignored and rebuilt by an idempotent
@@ -210,12 +219,28 @@ brittle and reproducibility shouldn't depend on a WAF's mood.
 > **Trade-off —** the repo carries the source text, but a fresh clone reproduces the identical index
 > offline — no dependence on a flaky re-fetch through EUR-Lex's WAF.
 
-**Parsing was awkward because legal HTML isn't semantic.** The regulation marks each Article with a bare
-`Article N` paragraph (not an `<h*>` heading), recitals as `(N) …` lines wedged between "Whereas:" and
-"HAVE ADOPTED THIS REGULATION", and the OJ notices tag their section headings with a CSS class
-(`ti-grseq-1`) rather than heading tags. There's no single generic parser that respects all of that, so
-[`src/ingest.py`](src/ingest.py) **detects each document's type from its content** and dispatches to a
-structure-specific chunker (regulation / OJ notice / heading-structured HTML / Markdown).
+**Parsing was awkward because legal HTML isn't semantic.** The structure a chunker needs is there, but
+it's never marked with proper heading tags:
+
+- **Articles** — flagged by a bare `Article N` paragraph, not an `<h*>` heading.
+- **Recitals** — `(N) …` lines wedged between "Whereas:" and "HAVE ADOPTED THIS REGULATION".
+- **OJ-notice section headings** — tagged with a CSS class (`ti-grseq-1`) rather than heading tags.
+
+No single generic parser respects all of that, so [`src/ingest.py`](src/ingest.py) **detects each
+document's type from its content** and dispatches to a structure-specific chunker (regulation / OJ notice /
+heading-structured HTML / Markdown).
+
+> **◆ Decision —** *The fetching-and-parsing path is admittedly cumbersome, but the off-the-shelf
+> alternatives weren't better — so it's kept as-is for now.* Before settling on per-type detection plus
+> structure-specific chunkers, a few drop-in routes were tried and fell short: Microsoft's **`markitdown`**
+> (HTML→Markdown) flattened exactly the `Article N` / `ti-grseq-1` cues the chunker keys off; **LLM
+> preprocessing** to normalize structure was both unreliable on the bare markup and a clash with the
+> local-only, no-paid-API constraint; and an **`eurlex` Python package** didn't cover all four document
+> types cleanly.
+>
+> **Trade-off —** more bespoke parsing code to own than a single library call, kept because it's the only
+> path that reliably preserves the legal boundaries citations depend on — revisitable if one of those
+> tools matures.
 
 **Chunking follows the law's own structure, not fixed token windows.** Because a citation has to point at a
 *real provision*, chunks are cut on **legal boundaries** — one chunk per **Article** or **Recital** (per
