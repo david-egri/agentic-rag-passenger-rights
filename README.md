@@ -250,13 +250,13 @@ Three caveats about what this corpus — and the rules it encodes — does and d
 
 What it's built with, where the code lives, and how the graph actually runs — section by section:
 
-- **Tech stack** — the packages it's built from
-- **Project structure** — where everything lives in the repo
-- **System design** — the system as a directed workflow, not a free-running agent
-- **The main graph** — the seven nodes and how a query routes through them
-- **The RAG subgraph** — the modular retrieval graph the main graph calls
-- **The two tools** — retrieval plus the deterministic calculator
-- **Model choices** — the local models and the hardware that constrained them
+- **Tech stack**
+- **Project structure**
+- **System design**
+- **Main graph**
+- **RAG subgraph**
+- **Tools**
+- **Models**
 
 ### Tech stack
 
@@ -438,7 +438,7 @@ rails — several points hand a real decision to the LLM rather than hardcoding 
 > **Trade-off —** a small boundary-mapping step to maintain, in exchange for a RAG subgraph that stays
 > independently testable and reusable (both the rights path and the eligibility branch call it).
 
-### The main graph (`src/graph.py`) — 7 nodes
+### Main graph
 
 ```
                        ┌─────────┐
@@ -533,7 +533,7 @@ an append-only reducer (`operator.add`) instead of being overwritten, so every n
 parallel branches — *adds* its own entry. That append-only log is exactly what the UI streams to show
 the run node by node.
 
-### The RAG subgraph (`src/rag.py`)
+### RAG subgraph
 
 Retrieval is its own compiled graph, attached to the main graph as a single `rag` node and shared by
 both the rights path and the eligibility branch. This is the most self-correcting part of the system:
@@ -588,7 +588,7 @@ kept fixed while `query` is the thing that gets rephrased and re-retrieved, boun
 the loop finishes, the main graph's `rag` node copies just `documents`, `answer`, and `citations` back
 into `AgentState` — the boundary mapping that keeps this subgraph independently testable and reusable.
 
-### The two tools (`src/tools.py`)
+### Tools
 
 The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s.
 
@@ -652,7 +652,7 @@ to the ~1500/3500 km band edges, the representative airport is close enough.
 > when the model is the weak link, since a city's airports sit within a few km relative to the
 > ~1500/3500 km band edges.
 
-### Model choices
+### Models
 
 **Developed on a MacBook Air (Apple M1, 8 GB RAM).** And 8 GB is the *whole* budget, shared: the OS, the
 Streamlit app, the Chroma vector store, and Ollama serving **two** models (the LLM *and* the embedder) all
