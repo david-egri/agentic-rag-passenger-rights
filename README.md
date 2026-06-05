@@ -1010,3 +1010,14 @@ without having to invent inputs.
 | **Calculator** | Flight inputs in, the full breakdown out (distance → band → threshold → reduction → amount). | ✅ dropdown |
 | **Agent** | The whole graph: a live, node-by-node trace, the final grounded answer, citations, and the disclaimer — plus a live graph diagram. | ✅ dropdown |
 
+---
+
+## Licensing
+
+The **code** in this repository is released under the **MIT License** — see [`LICENSE`](LICENSE).
+
+The **data is licensed separately** and is *not* covered by the MIT License: the RAG corpus is
+© European Union (EUR-Lex / Your Europe), reusable with acknowledgement, and the airport data is
+© OpenFlights.org under the **ODbL**. Full per-file provenance and licensing live in
+[`data/SOURCES.md`](data/SOURCES.md).
+
