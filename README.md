@@ -443,32 +443,9 @@ rails — several points hand a real decision to the LLM rather than hardcoding 
 
 ### Main graph
 
-```
-                       ┌─────────┐
-  user query  ───────▶ │ intake  │  pull out flight details + classify the question
-                       └────┬────┘
-                            ▼
-                       ┌─────────┐
-                       │ router  │  decide which path, write the decision into state
-                       └────┬────┘
-          ┌─────────────────┼───────────────────────────┬──────────────────┐
-   rights_info        compensation_calc / mixed                         out_of_scope
-          │                 │  (planner splits a mixed question in two)        │
-          ▼                 ▼                                                  ▼
-     ┌─────────┐     ┌──────────────── fan-out ───────────────┐          ┌──────────┐
-     │   rag   │     │  rag → eligibility    ‖    calculator   │          │ fallback │
-     │(subgraph)     │  (was it the airline's │  (the actual   │          └────┬─────┘
-     └────┬────┘     │   fault?)             │   €250/400/600) │               │
-          │          └──────────────── fan-in ────────────────┘               │
-          │                          │                                         │
-          └──────────────┬───────────┴─────────────────────────────────────────┘
-                         ▼
-                   ┌───────────┐
-                   │ synthesize│  stitch the pieces together + apply the eligibility gate:
-                   └─────┬─────┘  final = eligible ? amount : €0   (plain code, no model)
-                         ▼
-                   final answer
-```
+![Main graph — intake → router → (rag · planner → calculator · fallback) → eligibility → deferred synthesize → end](docs/diagrams/main_graph.png)
+
+*Generated from the live compiled graph — regenerate with `docs/diagrams/generate_diagrams.py`.*
 
 Reading it node by node:
 
@@ -541,12 +518,9 @@ the run node by node.
 Retrieval is its own compiled graph, attached to the main graph as a single `rag` node and shared by
 both the rights path and the eligibility branch. This is the most self-correcting part of the system:
 
-```
-retrieve → grade the results → good enough?  ──yes──▶ generate the answer
-                                    │
-                                    └──no──▶ rewrite the query → retrieve again
-                                            (bounded: at most REWRITE_MAX_RETRIES tries)
-```
+![Corrective-RAG subgraph — retrieve → grade → generate, or rewrite the query and retrieve again (bounded loop)](docs/diagrams/rag_subgraph.png)
+
+*Generated from the live compiled graph — regenerate with `docs/diagrams/generate_diagrams.py`.*
 
 Rather than trust the first retrieval, it grades the results; if they're weak it rephrases the query and
 retrieves again — capped at `REWRITE_MAX_RETRIES` so latency stays bounded. That grade-and-retry is the
