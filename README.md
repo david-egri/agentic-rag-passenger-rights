@@ -14,12 +14,31 @@ No paid APIs, no data leaving the box. The whole thing comes up with one command
 
 ## The problem
 
-If your flight is cancelled or badly delayed inside the EU, the law (Regulation 261/2004) says you may
+If your flight is cancelled or badly delayed inside the EU, the law (**Reg. 261/2004**) says you may
 be owed up to €600 — and almost nobody claims it. The rules are real but fiddly: the amount depends on
 how far you were flying and how late you arrived, and whether you get *anything* depends on whether the
 disruption was the airline's fault or an "extraordinary circumstance" like weather. Most people don't
 know the thresholds, and airlines aren't in a hurry to volunteer them. So there's a genuine, everyday
 need: *tell me, in plain terms, what I'm owed and why.*
+
+**Scope, narrowing from the top down.** This system is deliberately not a general travel assistant — it
+occupies one specific box, and it helps to see exactly which:
+
+- **EU air passenger rights** — the broad field of EU consumer protection for air travel.
+  - **Regulation (EC) No 261/2004** (hereafter **Reg. 261/2004**) — the single in-force instrument this
+    system is built around. It does *not* cover everything about flying; it governs three **disruption
+    events**:
+    - **Denied boarding** (typically overbooking),
+    - **Cancellation**, and
+    - **Long delay** (the 3-hour-plus arrival-delay line drawn by the *Sturgeon* case law).
+  - For each of those events it defines the same set of remedies: **care/assistance** (meals, hotel),
+    **re-routing or refund**, and — the part everyone asks about — **cash compensation** of
+    **€250 / €400 / €600** by distance band.
+
+So when the EUR-Lex summary of this regulation is literally titled *"air passenger rights in case of denied
+boarding, delay or cancellation,"* that's the whole scope in one line. Everything outside that box —
+baggage fees, seat pricing, pets in the cabin, visas — is *not* this regulation's concern, and the system
+has to recognise that and decline rather than guess.
 
 These are the kinds of real questions people actually ask — and they don't all want the same thing:
 
@@ -539,24 +558,79 @@ data/corpus/           # the frozen legal corpus (committed); data/chroma/ is de
 notes/                 # design proposal, decisions, eval results, review findings
 ```
 
-One thing worth calling out: ingestion is a **generic drop-in loader**. Drop a new file into
-`data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its structure, and indexed —
-no code changes. The chunking follows the *legal* structure (by Article / Recital, splitting only
-oversized articles) rather than blind fixed-size windows, so citations land on a real provision instead
-of an arbitrary slice.
+One thing worth calling out: ingestion ([`src/ingest.py`](src/ingest.py)) is a **generic drop-in loader** —
+drop a file into `data/corpus/`, re-run `python -m src.ingest`, and it's detected, chunked by its
+structure, and indexed with no code changes. The fetching/parsing/chunking details (and *why* chunking
+follows the legal structure rather than fixed token windows) are in
+[Corpus & sources](#corpus--sources) above.
 
 ---
 
 ## Corpus & sources
 
-The corpus is a **frozen, dated snapshot** committed under `data/corpus/` — it's the source of truth,
-and the ChromaDB index is just rebuilt from it. Four documents: the full **Regulation (EC) No 261/2004**,
-the **2024 Commission interpretative guidelines**, the EUR-Lex **legislative summary**, and a
-**Your Europe** plain-language summary.
+Everything here answers questions about **Reg. 261/2004**, so the corpus is built *around the regulation
+as the core*, with a few supporting documents that make that core usable. There are two distinct bodies of
+data — the **RAG corpus** (retrieved and cited as law) and the **airport reference data** (used only by
+the calculator) — and they're kept deliberately separate.
 
-Licensing and provenance are in [`data/SOURCES.md`](data/SOURCES.md). EUR-Lex / Publications Office
-content is © European Union (reusable with acknowledgement); the OpenFlights `airports.dat` the
-calculator uses (not part of the RAG corpus) is **ODbL** — attributed accordingly.
+### The RAG corpus — what retrieval reads over
+
+A **frozen, dated snapshot** committed under `data/corpus/` — the single source of truth; the ChromaDB
+index is just rebuilt from it. Four documents, each playing a distinct role *relative to the core law*:
+
+| Document | Role relative to the core | Source |
+|----------|---------------------------|--------|
+| **Regulation (EC) No 261/2004** — full text | **The core**: the binding legal text itself | [EUR-Lex · CELEX 32004R0261](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32004R0261) |
+| **Commission Interpretative Guidelines (2024)** | How the Commission *reads* the text — fills gaps the bare articles leave (e.g. what counts as "extraordinary"), incorporating CJEU case law | [OJ C/2024/5687](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:C_202405687) |
+| **EUR-Lex legislative summary** | A neutral, structured *overview* of the regulation — a good retrieval target for "what does it cover" questions | [LEGISSUM:l24173](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=LEGISSUM:l24173) |
+| **Your Europe plain-language summary** | The same rights in *plain language* — matches how real users actually phrase questions, which improves retrieval | [Your Europe](https://europa.eu/youreurope/citizens/travel/passenger-rights/air/index_en.htm) |
+
+**Why anything beyond the regulation itself?** The bare legal text is necessary but not sufficient: it's
+terse, heavily cross-referential, and silent on much of the interpretation people actually need (the
+3-hour delay line and the "extraordinary circumstances" test both come from *case law*, not the article
+text). Each supporting document closes a specific gap — the **guidelines** add interpretation, the
+**legislative summary** adds structure, the **plain-language summary** adds the everyday vocabulary a user
+question is phrased in — so retrieval has a grounded passage to return whether the question arrives in
+legal or colloquial language. All four are © European Union, reusable with acknowledgement.
+
+### The airport reference data — used by the calculator, *not* the corpus
+
+The compensation calculator needs coordinates to compute great-circle distance, so it loads OpenFlights'
+`airports.dat` (IATA → lat/lon). This is **kept separate from the RAG corpus on purpose**: it's reference
+data for a deterministic tool, never retrieved, never cited as law. It also carries a different licence —
+**ODbL** (OpenFlights.org), a copyleft stronger than the EU content's — which is a second reason to keep
+it out of the corpus and attribute it on its own.
+
+Full per-file licensing, provenance, and fetch methods live in [`data/SOURCES.md`](data/SOURCES.md).
+
+### Getting the data in — fetching, parsing, chunking
+
+Two things made ingestion genuinely non-trivial, and both shaped the design:
+
+**Fetching was actively blocked.** The EUR-Lex web UI sits behind an AWS WAF that silently challenges
+`curl`, so the obvious "just download the page" approach fails. The regulation and the 2024 guidelines were
+instead pulled as structured (X)HTML from the Publications Office **Cellar REST API** (HTTP content
+negotiation), which serves the same authoritative text without the WAF challenge; the legislative summary
+came from the EUR-Lex **TXT/HTML export endpoint** via Python `requests` (whose default client passes
+where `curl` is blocked); the Your Europe page was reduced to its `<main>` content and frozen as Markdown.
+This is also *why the corpus is committed frozen* rather than fetched at build time — re-fetching is
+brittle and reproducibility shouldn't depend on a WAF's mood.
+
+**Parsing was awkward because legal HTML isn't semantic.** The regulation marks each Article with a bare
+`Article N` paragraph (not an `<h*>` heading), recitals as `(N) …` lines wedged between "Whereas:" and
+"HAVE ADOPTED THIS REGULATION", and the OJ notices tag their section headings with a CSS class
+(`ti-grseq-1`) rather than heading tags. There's no single generic parser that respects all of that, so
+[`src/ingest.py`](src/ingest.py) **detects each document's type from its content** and dispatches to a
+structure-specific chunker (regulation / OJ notice / heading-structured HTML / Markdown).
+
+**Chunking follows the law's own structure, not fixed token windows.** Because a citation has to point at a
+*real provision*, chunks are cut on **legal boundaries** — one chunk per **Article** or **Recital** (per
+numbered **Section** for the guidelines, per **heading** for the summaries) — and each chunk carries its
+`source` + `article` as citation metadata. Only an oversized unit (a very long Article) is sub-split, and
+then only on **paragraph** boundaries with a one-paragraph overlap, so a retrieved chunk is always a
+coherent, self-contained provision rather than an arbitrary 512-token slice that begins mid-sentence. The
+loader is **generic and drop-in**: add a file to `data/corpus/`, re-run `python -m src.ingest`, and it's
+detected, chunked by its structure, embedded, and indexed — no code changes.
 
 ---
 
