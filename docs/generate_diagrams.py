@@ -2,7 +2,7 @@
 
 Run from the repo root (with the project venv active):
 
-    python docs/diagrams/generate_diagrams.py
+    python docs/generate_diagrams.py
 
 Each compiled LangGraph is rendered to a left-to-right Mermaid PNG via LangGraph's
 ``draw_mermaid_png`` helper, which posts the Mermaid source to the mermaid.ink API — so this
@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from langchain_core.runnables.graph_mermaid import draw_mermaid_png  # noqa: E402
