@@ -513,6 +513,14 @@ an append-only reducer (`operator.add`) instead of being overwritten, so every n
 parallel branches — *adds* its own entry. That append-only log is exactly what the UI streams to show
 the run node by node.
 
+> **◆ Decision —** *`trace` is an append-only reducer field, not an overwritten one.* It's typed
+> `Annotated[list, operator.add]`, so every node — including the two parallel branches — *appends* its
+> entry instead of replacing the field.
+>
+> **Trade-off —** one field behaves differently from the rest of the last-write-wins state, but that's
+> exactly what lets both fan-out branches write the trace at once (a plain channel would error on the
+> concurrent write at the join) — and it yields the ordered, node-by-node log the UI streams.
+
 ### RAG subgraph
 
 Retrieval is its own compiled graph, attached to the main graph as a single `rag` node and shared by
@@ -721,8 +729,9 @@ Each of those labels is derived deliberately — from the law, not from the syst
 
 Two cases the small model is known to get wrong are flagged `known_fail` in the set:
 
-- a **coverage** question it misroutes as off-topic (a non-EU→EU flight on a non-EU carrier)
-- an **ATC-delay** it wrongly treats as compensable instead of extraordinary
+- a **coverage** question about a non-EU→EU flight on a non-EU carrier that it misroutes as off-topic
+- a delay caused by **air-traffic-control restrictions** that it wrongly treats as compensable instead of
+  extraordinary
 
 The runner reports these apart from the rest, so a long-standing limitation is never mistaken for a newly
 introduced bug.
