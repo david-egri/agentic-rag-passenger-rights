@@ -285,32 +285,65 @@ What it's built with, where the code lives, and how the graph actually runs — 
 ### Project structure
 
 ```
-config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
-streamlit_app.py       # the UI (one tab per layer); ui_components.py = shared renderers
-src/
-  llm.py               # get_llm() behind the LLM_BACKEND seam
-  state.py             # the typed AgentState (+ append-only trace reducer)
-  graph.py             # the main 7-node graph + run_agent()
-  rag.py               # the compiled corrective-RAG subgraph
-  tools.py             # @tool retrieve_passenger_rights + @tool calculate_compensation
-  calculator.py        # pure, deterministic Art. 7 logic (haversine + band table)
-  ingest.py            # generic drop-in corpus loader → structure-aware chunkers → Chroma
-  store.py             # Chroma client + Ollama embeddings
-eval/                  # eval_set.yaml + functional_eval.py + loadtest.py
-tests/test_calculator.py
-docker/                # entrypoint.sh + prepare.py (wait for Ollama → pull models → ingest)
-Dockerfile  docker-compose.yml  .dockerignore
-data/corpus/           # the frozen legal corpus (committed); data/chroma/ is derived (gitignored)
-notes/                 # design proposal, decisions, eval results, review findings
+src/                      # application code
+  llm.py                  # talks to the local LLM
+  state.py                # data shared between steps
+  graph.py                # the agent — wires the steps together
+  rag.py                  # retrieval with self-correction
+  tools.py                # the two tools: search + calculator
+  calculator.py           # compensation math (no LLM)
+  ingest.py               # loads documents into the search index
+  store.py                # vector store + embeddings
+eval/                     # correctness + speed tests
+  eval_set.yaml           # 15 test questions + expected answers
+  functional_eval.py      # checks the answers are correct
+  loadtest.py             # measures speed
+tests/                    # unit tests
+  test_calculator.py      # the calculator's tests
+docker/                   # container setup
+  entrypoint.sh           # runs when the container starts
+  prepare.py              # pulls models + builds the index
+data/                     # documents + search index
+  corpus/                 # source documents (the law)
+  chroma/                 # search index (auto-built)
+notes/                    # design docs & decisions
+config.py                 # all settings — start here
+streamlit_app.py          # the app — run this
+ui_components.py          # shared UI pieces
+Dockerfile                # builds the app image
+docker-compose.yml        # runs app + Ollama together
+docker-compose.gpu.yml    # optional NVIDIA GPU override
+.dockerignore             # files excluded from the image
 ```
 
-Ingestion (`src/ingest.py`) is the generic, structure-aware drop-in loader detailed in
-[Corpus & sources](#corpus--sources) above.
+A few points worth calling out:
 
-Built for reproducibility: stdlib `venv`, pinned `requirements.txt`, and Python 3.14 (matching the
-`python:3.14-slim` Docker base), with `temperature=0` and fixed seeds where the backend supports them.
-Every knob lives in `config.py` with env overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`,
-`REWRITE_MAX_RETRIES`, …).
+- **Drop-in ingestion** — generic, structure-aware corpus loader (`src/ingest.py`)
+- **Pinned & isolated** — pinned dependencies and Python version (stdlib `venv`)
+- **Deterministic** — reproducible runs (`temperature=0`)
+- **One place for config** — every knob, env-overridable (`config.py`)
+
+> **◆ Decision —** *Flat modules, not nested packages.* `src/` is a flat set of files (`graph.py`,
+> `rag.py`, `tools.py`, `calculator.py`, …); abstraction is introduced only when a module genuinely
+> earns splitting.
+>
+> **Trade-off —** less upfront scaffolding than a layered package tree, in exchange for a small codebase
+> you can read top to bottom with no indirection to chase — while the required agent architecture (graph,
+> typed state, RAG subgraph, `@tool`s) stays structured regardless.
+
+> **◆ Decision —** *No build tool — plain commands over a Makefile.* No Make / Poetry / conda / uv; just
+> stdlib `venv`, a pinned `requirements.txt`, and the handful of commands documented in the README.
+>
+> **Trade-off —** you copy-paste a few commands instead of `make run`, but there's zero extra tooling to
+> install or learn and every step stays explicit.
+
+> **◆ Decision —** *Config is an env-overridable seam, which is also what makes Docker work.* Every knob
+> lives in `config.py` but can be overridden by an env var — so the same code runs three ways (local
+> venv, all-in-Docker, Docker-app + host Ollama) just by pointing `OLLAMA_URL` at a different address, no
+> source changes.
+>
+> **Trade-off —** every setting has to be read through the config seam rather than hardcoded, bought as
+> one image that reconfigures itself per environment from the outside.
 
 ### How it works
 
