@@ -12,7 +12,7 @@ No paid APIs, no data leaving the box. The whole thing comes up with one command
 
 ---
 
-## The problem
+## Scope & problem statement
 
 If your flight is cancelled or badly delayed inside the EU, the law (**Reg. 261/2004**) says you may
 be owed up to €600 — and almost nobody claims it. The rules are real but fiddly: the amount depends on
@@ -66,11 +66,9 @@ So the model needs help: retrieval to stay grounded, a calculator to get the num
 structure to keep it in its lane. That combination — an LLM given tools and retrieval — is the core of
 what's built here.
 
----
+### What it does
 
-## What it does
-
-You can ask it four kinds of thing, and it gives back a different kind of answer for each:
+Concretely, that comes out as four kinds of question you can ask — each answered a different way:
 
 - **"What are my rights?"** → a plain-language answer grounded in the law, **with a citation** (which
   document, which article). If the law doesn't actually support an answer, it says so rather than bluff.
