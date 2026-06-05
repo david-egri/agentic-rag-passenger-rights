@@ -662,33 +662,75 @@ what a local-only stack costs.
 
 ---
 
-## Evaluation & performance
+## Summary of the functional evaluation and performance test results
 
-The short version is below; full methodology and numbers are in
-[`notes/PHASE6_EVAL_RESULTS.md`](notes/PHASE6_EVAL_RESULTS.md). Ground truth is pinned to what
-Reg. 261/2004 *actually says* (every route distance recomputed from real coordinates before fixing the
-expected amount), not to whatever the model happens to output.
+How the system is measured and how it holds up — in three parts:
 
-**How the ground truth is built.** The eval set is a hand-authored YAML file
-([`eval/eval_set.yaml`](eval/eval_set.yaml)) — 15 questions spanning all four lanes (rights / compensation
-/ mixed / out-of-scope), each tagged with its expected `query_type`, and where applicable an `eligible`
-verdict, the gated `amount_eur`, and a set of acceptable citations (`any_of`). Each label is sourced
-deliberately, *against the law rather than against the system*:
+- **Evaluation set**
+- **Functional evaluation**
+- **Performance test**
 
-- **Amounts** come from the deterministic calculator, not from a model — and the calculator is itself
+### Evaluation set
+
+The evaluation rests on two deliberate choices.
+
+**It scores the graph's intermediate state, not its final prose.** Rather than grade the free-text answer,
+it checks the structured fields the nodes write into `AgentState`:
+
+- `query_type` — the routing label
+- `eligible` — the eligibility verdict
+- `final_eur` — the gated final amount
+- `rag_citations` — the citations backing the answer
+
+A label, a boolean, an integer, and a citation set can be matched against ground truth; generated prose
+can't be, not reliably.
+
+**Its ground truth is anchored to the law, not to current output.** The targets survive a future
+code/corpus change instead of silently tracking whatever the graph happens to emit today.
+
+With that settled, the set itself. The eval set is a hand-authored YAML file
+([`eval/eval_set.yaml`](eval/eval_set.yaml)) — 15 questions, all
+grounded in Regulation (EC) No 261/2004, spanning all four lanes:
+
+- **rights**
+- **compensation**
+- **mixed**
+- **out-of-scope**
+
+Each question is tagged with:
+
+- `query_type` — the expected lane it should be routed to (every question)
+- `eligible` — whether compensation is actually due (where applicable)
+- `amount_eur` — the gated final compensation amount (where applicable)
+- `any_of` — a set of citations, any one of which counts as correct (where applicable)
+
+Each of those labels is derived deliberately — from the law, not from the system's own output:
+
+- `amount_eur` — comes from the deterministic calculator, not from a model, and the calculator is itself
   unit-tested ([`tests/test_calculator.py`](tests/test_calculator.py)), so the expected € is a verified
   figure. Critically, every route's distance was **recomputed from real OpenFlights coordinates** before
   pinning the amount, because routes near a band edge (~1500 / ~3500 km) can flip the expected value — a
   wrong "expected" is worse than none.
-- **Eligibility** verdicts are set by hand from the regulation's control test (own-staff strike →
-  compensable; weather / ATC → extraordinary → €0).
-- **Citations** are matched on normalized `source` + `article` as a set-membership (recall) check against
-  the current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones
-  fails.
-- Anchoring to the law (not to current output) is deliberate: the targets **survive a future code/corpus
-  change** instead of silently tracking whatever the graph happens to emit today. The two cases the small
-  model still gets wrong are flagged in the set as `known_fail`, so the runner separates a *known gap* from
-  a *new regression*.
+- `eligible` — set by hand from the regulation's control test (own-staff strike → compensable; weather /
+  ATC → extraordinary → €0).
+- `any_of` — matched on normalized `source` + `article` as a set-membership (recall) check against the
+  current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones fails.
+
+Two cases the small model is known to get wrong are flagged `known_fail` in the set:
+
+- a **coverage** question it misroutes as off-topic (a non-EU→EU flight on a non-EU carrier)
+- an **ATC-delay** it wrongly treats as compensable instead of extraordinary
+
+The runner reports these apart from the rest, so a long-standing limitation is never mistaken for a newly
+introduced bug.
+
+> **◆ Decision —** *Score the graph's intermediate state, not its final answer.* The eval checks the
+> structured fields each node writes into `AgentState` (`query_type`, `eligible`, `final_eur`,
+> `rag_citations`), never the generated prose.
+>
+> **Trade-off —** it can't catch a poorly-worded-but-correct answer, but a label, a boolean, an integer,
+> and a citation set are exactly matchable against ground truth while free text isn't — so every dimension
+> gets an unambiguous pass/fail.
 
 > **◆ Decision —** *Ground truth is anchored to what Reg. 261/2004 says, not to the system's output.*
 > Amounts come from the unit-tested calculator (distances recomputed from real coordinates),
@@ -696,6 +738,13 @@ deliberately, *against the law rather than against the system*:
 >
 > **Trade-off —** the targets can diverge from current output and surface as failures, but they measure
 > correctness rather than self-consistency and survive a future code or corpus change.
+
+> **◆ Decision —** *Flag the small model's known misses as `known_fail` and tally them separately.* The
+> two cases the 3B model reliably gets wrong are tagged in the eval set, scored like any other case, but
+> reported apart from the rest.
+>
+> **Trade-off —** a little bookkeeping in the set, bought as a baseline that tells a long-standing known
+> limitation apart from a newly introduced regression.
 
 Run it yourself:
 
@@ -705,7 +754,7 @@ python -m eval.loadtest                   # the load test (N=50) + per-node timi
 pytest tests/test_calculator.py           # the deterministic calculator's unit tests
 ```
 
-### Is it correct? (15-question functional eval, `qwen2.5:3b-instruct`, temperature 0)
+### Functional evaluation
 
 | Dimension | Score |
 |---|---|
@@ -724,7 +773,7 @@ even a misrouted question comes out with the **correct number**; only the path i
 The fix (force the intake step to fill a strict schema instead of replying freely) is understood and
 queued for a later review phase.
 
-### Is it fast enough? (load test, N=50, sequential)
+### Performance test
 
 - **One query takes ~18 s** on this hardware (mean 17.8 s, p95 25.7 s). The fastest is the off-topic
   path at 2.5 s — it skips the model entirely.
@@ -738,7 +787,7 @@ queued for a later review phase.
   saves real time. The next lever — skip the heavy RAG step for pure money questions, which don't need
   it — is identified and deferred to the review phase.
 
-### CPU vs GPU (the Docker caveat)
+### CPU vs GPU
 
 Same queries, same settings, host Metal GPU vs the CPU-only container: the in-container model is
 **~5.5× slower** end to end (mean 25 s → 140 s on the LLM-heavy routes). A bare single-prompt benchmark
