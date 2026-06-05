@@ -70,18 +70,20 @@ what's built here.
 
 ## What it does
 
-Four kinds of question, four paths:
+You can ask it four kinds of thing, and it gives back a different kind of answer for each:
 
-- **"What are my rights?"** → looks up the answer in the legal corpus and quotes it back with a
-  **citation** (which document, which article). If the corpus doesn't actually support an answer, it
-  says so instead of bluffing.
-- **"How much am I owed?"** → a calculator works out the distance, picks the right band
-  (€250 / €400 / €600), applies the 3-hour threshold, and only *then* checks eligibility — weather
-  gets you €0, the airline's own strike doesn't.
-- **Both at once** → the question is split in two; the legal lookup and the calculation run side by
-  side and are joined into a single answer.
-- **Off-topic** (baggage fees, visas, pricing…) → caught and routed to a polite "that's outside what I
-  cover" instead of a hallucinated rule.
+- **"What are my rights?"** → a plain-language answer grounded in the law, **with a citation** (which
+  document, which article). If the law doesn't actually support an answer, it says so rather than bluff.
+- **"How much am I owed?"** → an **exact euro figure**: the right €250 / €400 / €600 band for your
+  distance, after the 3-hour threshold and the eligibility check (weather gets you €0, the airline's own
+  strike doesn't).
+- **"Both — what am I owed *and* why?"** → a single answer that carries the grounded legal explanation
+  **and** the computed amount together.
+- **Anything off-topic** (baggage fees, visas, pricing…) → a polite "that's outside what I cover," never
+  a made-up rule.
+
+*How* it tells these apart and produces each answer is the [How it works](#how-it-works) section below;
+this is just what you get back.
 
 ---
 
@@ -431,7 +433,9 @@ Each package does one job:
 | **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
 | **Docker / compose** | packages the app and Ollama together for a one-command run |
 
-Stdlib `venv` for isolation, pinned `requirements.txt`, Python 3.14. Knobs live in `config.py` with env
+Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
+`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
+seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
 overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
 `LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
 not a rewrite.
@@ -575,8 +579,10 @@ the calculator) — and they're kept deliberately separate.
 
 ### The RAG corpus — what retrieval reads over
 
-A **frozen, dated snapshot** committed under `data/corpus/` — the single source of truth; the ChromaDB
-index is just rebuilt from it. Four documents, each playing a distinct role *relative to the core law*:
+A **frozen, dated snapshot** committed under `data/corpus/` — the single source of truth. The ChromaDB
+index is a **derived artifact** (gitignored), rebuilt from the corpus by an **idempotent**
+`python -m src.ingest`, so a fresh clone reproduces the *identical* index offline with no network access.
+Four documents, each playing a distinct role *relative to the core law*:
 
 | Document | Role relative to the core | Source |
 |----------|---------------------------|--------|
@@ -631,15 +637,6 @@ then only on **paragraph** boundaries with a one-paragraph overlap, so a retriev
 coherent, self-contained provision rather than an arbitrary 512-token slice that begins mid-sentence. The
 loader is **generic and drop-in**: add a file to `data/corpus/`, re-run `python -m src.ingest`, and it's
 detected, chunked by its structure, embedded, and indexed — no code changes.
-
----
-
-## Reproducibility
-
-Versions are pinned (`requirements.txt`, `python:3.14-slim`), `temperature=0` with fixed seeds where the
-backend supports it, ingestion is idempotent, and the corpus is committed — so a fresh clone rebuilds the
-exact same index offline. The vector store is the only derived artifact, gitignored and rebuilt
-deterministically from the corpus.
 
 ---
 
