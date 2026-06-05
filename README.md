@@ -21,6 +21,16 @@ disruption was the airline's fault or an "extraordinary circumstance" like weath
 know the thresholds, and airlines aren't in a hurry to volunteer them. So there's a genuine, everyday
 need: *tell me, in plain terms, what I'm owed and why.*
 
+These are the kinds of real questions people actually ask — and they don't all want the same thing:
+
+- *"Can I get a refund if my flight is cancelled?"*
+- *"My flight is delayed by 5 hours — am I entitled to meals and a hotel?"*
+- *"What are my rights if I'm denied boarding because the flight was overbooked?"*
+- *"My Budapest (BUD) → London (LHR) flight was delayed 4 hours. How much compensation am I owed?"*
+- *"My Madrid → New York flight was cancelled because of a snowstorm. What are my rights, and how much will I get?"*
+- *"Am I covered flying from New York to Paris on a US airline?"*
+- *"Can I bring my dog in the cabin?"* — and the system has to know this one **isn't** its job.
+
 That need is a poor fit for a plain chatbot, for three reasons that end up shaping the whole design:
 
 - **Half the question is law, half is arithmetic.** "My Budapest–London flight was cancelled, how much
@@ -211,7 +221,10 @@ Two standard workflow patterns from that article show up directly: **routing** (
 question and sends it down the right path) and **parallelization** (the legal lookup and the calculation
 run as independent branches and rejoin at the end). The part that's genuinely *agentic* is narrower: the
 corrective-RAG loop grades its own retrieval and rewrites the query when it came back weak — an
-evaluator-optimizer loop that reacts to its own output instead of following a fixed path.
+evaluator-optimizer loop that reacts to its own output instead of following a fixed path. These map onto
+the same vocabulary in LangGraph's own
+[workflows-and-agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents) (routing,
+parallelization, evaluator-optimizer), which is the framework-level statement of the same distinction.
 
 Concretely it's **two LangGraph graphs, each with its own typed state**: a main graph that runs the
 overall flow, and a separate RAG subgraph it calls for retrieval. They don't share a state object — the
@@ -313,6 +326,10 @@ retrieve → grade the results → good enough?  ──yes──▶ generate the
 Rather than trust the first retrieval, it grades the results; if they're weak it rephrases the query and
 retrieves again — capped at `REWRITE_MAX_RETRIES` so latency stays bounded. That grade-and-retry is the
 bit that most resembles an agent: the loop reacts to its own output instead of running straight through.
+The shape follows the corrective-RAG pattern from LangGraph's own
+[RAG examples](https://github.com/langchain-ai/langgraph/tree/main/examples/rag) (retrieve → grade →
+conditionally rewrite/re-retrieve → generate), adapted here with a hard retry cap and the hybrid grader
+below.
 The grader is a hybrid (the model judges relevance, with a cosine-distance floor as a safety net so a
 confidently-wrong model can't wave junk through), and `generate` is told to answer *only* from what was
 retrieved — no outside knowledge, no invented figures.
@@ -339,14 +356,47 @@ into `AgentState` — the boundary mapping that keeps this subgraph independentl
 
 ### The two tools (`src/tools.py`)
 
-The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s:
+The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s.
 
-- **`retrieve_passenger_rights(query)`** — the retrieval tool, used inside the RAG subgraph.
-- **`calculate_compensation(...)`** — the non-retrieval one, and the reason the numbers are trustworthy.
-  Given airports and a delay it computes great-circle distance from real coordinates, picks the band,
-  applies the threshold and the 50% reduction rule, and returns a figure — **with no model anywhere in
-  it.** That's what makes the amounts exact, and it's also why the calculator's output can double as the
-  *ground truth* for the eval: a model-free function can't drift.
+**`retrieve_passenger_rights(query: str, top_k: int = config.TOP_K) -> list[dict]`** — the retrieval tool,
+used inside the RAG subgraph.
+
+- `query` — a natural-language question about EU air passenger rights.
+- `top_k` — how many passages to return (defaults to `config.TOP_K`).
+
+It embeds the query and runs a top-*k* semantic similarity search over the ingested corpus, returning each
+matched chunk's `text`, its citation `metadata` (source, article, title, url, …), and a `distance` (lower
+= closer). It's the only thing that reads the corpus, which is why grounding flows through exactly one
+place.
+
+**`calculate_compensation(origin_iata: str, dest_iata: str, delay_hours: float, disruption_type: str =
+"delay", rerouting_offered: bool = False) -> dict`** — the non-retrieval tool, and the reason the numbers
+are trustworthy.
+
+- `origin_iata` / `dest_iata` — IATA codes of the departure and final-destination airports (e.g. `"BUD"`,
+  `"LHR"`).
+- `delay_hours` — arrival delay at the final destination, in hours.
+- `disruption_type` — one of `"delay"`, `"cancellation"`, `"denied_boarding"`.
+- `rerouting_offered` — whether the carrier offered re-routing (enables the Art. 7(2) 50% reduction when
+  arrival is within the band's limit).
+
+Given those inputs it resolves both airports' coordinates (OpenFlights), computes great-circle distance,
+picks the €250 / €400 / €600 band, applies the 3-hour threshold and the 50% reduction rule, and returns a
+dict (`distance_km`, `band`, `final_amount_eur`, a plain-language `explanation`, …) — **with no model
+anywhere in it.** That's what makes the amounts exact, and it's also why the calculator's output can double
+as the *ground truth* for the eval: a model-free function can't drift.
+
+One design decision worth calling out here, because it's a concession to the small model rather than to the
+law: the calculator keys off **IATA city/metropolitan codes, not specific airport codes** (via a
+`METRO_ALIASES` fallback in `src/calculator.py`). When the intake step extracts airports from free text,
+the 3B model reliably produces the *city* code a person thinks in — London → `LON`, Paris → `PAR` — but is
+much shakier at the exact airport (`LHR` vs `LGW` vs `STN`). OpenFlights' table only carries airport codes,
+so a bare lookup of `LON` would fail. The fallback maps each metro code to the city's principal airport,
+applied **only when the direct airport lookup misses** (so it never overrides a real airport code). Since
+the amount keys off the *distance band*, and a city's airports sit within a few km of each other relative
+to the ~1500/3500 km band edges, the representative airport is close enough — we traded a sliver of
+geographic precision for entity-extraction reliability, which is the right trade when the model is the
+weak link.
 
 ---
 
@@ -367,8 +417,11 @@ overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the 
 `LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
 not a rewrite.
 
-**Developed on a MacBook Air (Apple M1, 8 GB RAM).** That constraint drove both model choices below — and
-it's the reason "one query takes ~18 s" in the numbers further down: on modest hardware, this is honestly
+**Developed on a MacBook Air (Apple M1, 8 GB RAM).** And 8 GB is the *whole* budget, shared: the OS, the
+Streamlit app, the Chroma vector store, and Ollama serving **two** models (the LLM *and* the embedder) all
+live in that same memory at once — so the headroom actually left for the model is well under 8 GB, not the
+full figure. That constraint drove both model choices below — and it's the reason "one query takes ~18 s"
+in the numbers further down: on modest hardware, with everything resident simultaneously, this is honestly
 what a local-only stack costs.
 
 **Two models, both local via Ollama:**
@@ -391,6 +444,27 @@ The short version is below; full methodology and numbers are in
 [`notes/PHASE6_EVAL_RESULTS.md`](notes/PHASE6_EVAL_RESULTS.md). Ground truth is pinned to what
 Reg. 261/2004 *actually says* (every route distance recomputed from real coordinates before fixing the
 expected amount), not to whatever the model happens to output.
+
+**How the ground truth is built.** The eval set is a hand-authored YAML file
+([`eval/eval_set.yaml`](eval/eval_set.yaml)) — 15 questions spanning all four lanes (rights / compensation
+/ mixed / out-of-scope), each tagged with its expected `query_type`, and where applicable an `eligible`
+verdict, the gated `amount_eur`, and a set of acceptable citations (`any_of`). Each label is sourced
+deliberately, *against the law rather than against the system*:
+
+- **Amounts** come from the deterministic calculator, not from a model — and the calculator is itself
+  unit-tested ([`tests/test_calculator.py`](tests/test_calculator.py)), so the expected € is a verified
+  figure. Critically, every route's distance was **recomputed from real OpenFlights coordinates** before
+  pinning the amount, because routes near a band edge (~1500 / ~3500 km) can flip the expected value — a
+  wrong "expected" is worse than none.
+- **Eligibility** verdicts are set by hand from the regulation's control test (own-staff strike →
+  compensable; weather / ATC → extraordinary → €0).
+- **Citations** are matched on normalized `source` + `article` as a set-membership (recall) check against
+  the current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones
+  fails.
+- Anchoring to the law (not to current output) is deliberate: the targets **survive a future code/corpus
+  change** instead of silently tracking whatever the graph happens to emit today. The two cases the small
+  model still gets wrong are flagged in the set as `known_fail`, so the runner separates a *known gap* from
+  a *new regression*.
 
 Run it yourself:
 
