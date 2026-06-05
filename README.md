@@ -252,7 +252,7 @@ What it's built with, where the code lives, and how the graph actually runs — 
 
 - **Tech stack** — the packages it's built from
 - **Project structure** — where everything lives in the repo
-- **How it works** — the system as a directed workflow, not a free-running agent
+- **System design** — the system as a directed workflow, not a free-running agent
 - **The main graph** — the seven nodes and how a query routes through them
 - **The RAG subgraph** — the modular retrieval graph the main graph calls
 - **The two tools** — retrieval plus the deterministic calculator
@@ -345,38 +345,62 @@ A few points worth calling out:
 > **Trade-off —** every setting has to be read through the config seam rather than hardcoded, bought as
 > one image that reconfigures itself per environment from the outside.
 
-### How it works
+### System design
 
-It's worth being precise about what this is, because it's easy to oversell. In the vocabulary of
-Anthropic's [*Building Effective Agents*](https://www.anthropic.com/engineering/building-effective-agents),
-this is a **workflow**, not an autonomous agent: an **augmented LLM** — a model given retrieval and a
-calculator — orchestrated through predefined code paths, rather than a model that decides its own next
-move.
+The design isn't invented from scratch here — it falls out of the decisions the problem already forced.
+The [Description of the problem](#description-of-the-problem-and-the-objective) concluded six, each rooted
+in the goal and the domain rather than in the technology:
 
-> **◆ Decision —** *A directed workflow, not an autonomous agent.* The graph governs control flow
-> through predefined paths; the model fills individual steps but never chooses the next move.
->
-> **Trade-off —** less open-ended autonomy, bought back as predictability and genuine evaluability —
-> the right call for a 3B model on a fixed-shape task.
+- **Conditional routing** — classify each question and send it down the matching lane
+- **Out-of-scope firewall** — decline anything outside Reg. 261/2004 instead of guessing
+- **Deterministic calculator tool** — the non-retrieval tool that computes the amount
+- **Modular RAG subgraph** — grounded, cited law for both rights and the eligibility call
+- **Decomposition + independent execution** — the "both" question fans out into parallel branches
+- **Typed shared state** — intermediate results accumulate in one inspectable object
 
-That's deliberate. The task has a known, fixed shape (work out what's being asked → look up the
-law and/or compute the amount → merge them), so a fixed graph is more predictable and far easier to
-evaluate than letting a 3B model free-wheel.
+What follows turns those into a concrete graph — and it's worth being precise about what kind of system
+that is. Two references share a single
+vocabulary for systems like this — Anthropic's
+[*Building Effective Agents*](https://www.anthropic.com/engineering/building-effective-agents) and
+LangChain's [workflows-and-agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents)
+— built on three ideas:
 
-Two standard workflow patterns from that article show up directly: **routing** (a node classifies each
+- **Augmented LLM** — the building block: a model given retrieval, tools, and memory
+- **Workflow** — augmented LLMs orchestrated through *predefined* code paths
+- **Agent** — a model that *dynamically directs* its own process and tool use
+
+By that vocabulary this system is a **workflow**, not an agent: an augmented LLM (retrieval plus a
+calculator) wired through a fixed graph, rather than a model that picks its own next move. That's
+deliberate — the task has a known, fixed shape (work out what's being asked → look up the law and/or
+compute the amount → merge them), so a fixed graph is more predictable and far easier to evaluate than
+letting a 3B model free-wheel.
+
+Two standard workflow patterns from those guides show up directly: **routing** (a node classifies each
 question and sends it down the right path) and **parallelization** (the legal lookup and the calculation
-run as independent branches and rejoin at the end). The part that's genuinely *agentic* is narrower: the
-corrective-RAG loop grades its own retrieval and rewrites the query when it came back weak — an
-evaluator-optimizer loop that reacts to its own output instead of following a fixed path. These map onto
-the same vocabulary in LangGraph's own
-[workflows-and-agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents) (routing,
-parallelization, evaluator-optimizer), which is the framework-level statement of the same distinction.
+run as independent branches and rejoin at the end). But "workflow" doesn't mean the model is on rails —
+several points hand a real decision to the LLM rather than hardcoding it:
+
+- **Self-correcting retrieval** — the corrective-RAG loop grades its own results and *rewrites the query*
+  to retry when they come back weak: an evaluator-optimizer loop that reacts to its own output. The most
+  clearly *agentic* part.
+- **LLM-driven routing** — which lane a question takes is the model's classification, not a keyword rule
+  (a real decision, though only among predefined branches).
+- **Autonomous eligibility call** — the model judges whether a disruption was within the carrier's
+  control (the "extraordinary circumstances" test) instead of matching a fixed table.
+- **Relevance grading** — the grader is the model deciding whether retrieved passages actually answer the
+  question, with a distance floor only as a backstop.
 
 Concretely it's **two LangGraph graphs, each with its own typed state**: a main graph that runs the
 overall flow, and a separate RAG subgraph it calls for retrieval. They don't share a state object — the
 main graph hands the subgraph a query and maps the result back at the boundary (the standard LangGraph
 pattern for a subgraph with a different schema). Each graph is below, followed by the state object it
 carries.
+
+> **◆ Decision —** *A directed workflow, not an autonomous agent.* The graph governs control flow
+> through predefined paths; the model fills individual steps but never chooses the next move.
+>
+> **Trade-off —** less open-ended autonomy, bought back as predictability and genuine evaluability —
+> the right call for a 3B model on a fixed-shape task.
 
 > **◆ Decision —** *Two graphs, each with its own typed state.* The main graph and the RAG subgraph
 > don't share a state object; the main graph hands the subgraph a query and maps just the result
