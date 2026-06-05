@@ -705,22 +705,23 @@ what a local-only stack costs.
 
 ## Summary of the functional evaluation and performance test results
 
-How the system is measured and how it holds up — in three parts:
+How the system is measured and how it holds up — in four parts:
 
 - **Evaluation set**
 - **Functional evaluation**
 - **Performance test**
+- **CPU vs GPU**
 
 ### Evaluation set
 
 The evaluation rests on two deliberate choices.
 
 **It scores the graph's intermediate state, not its final prose.** Rather than grade the free-text answer,
-it checks the structured fields the nodes write into `AgentState`:
+it checks the structured values the nodes write into `AgentState`:
 
 - `query_type` — the routing label
 - `eligible` — the eligibility verdict
-- `final_eur` — the gated final amount
+- `final_eur` — the gated final amount (the calculator's candidate `final_amount_eur` after the eligibility gate)
 - `rag_citations` — the citations backing the answer
 
 A label, a boolean, an integer, and a citation set can be matched against ground truth; generated prose
@@ -770,7 +771,7 @@ The runner reports these apart from the rest, so a long-standing limitation is n
 introduced bug.
 
 > **◆ Decision —** *Score the graph's intermediate state, not its final answer.* The eval checks the
-> structured fields each node writes into `AgentState` (`query_type`, `eligible`, `final_eur`,
+> structured values each node writes into `AgentState` (`query_type`, `eligible`, `final_eur`,
 > `rag_citations`), never the generated prose.
 >
 > **Trade-off —** it can't catch a poorly-worded-but-correct answer, but a label, a boolean, an integer,
