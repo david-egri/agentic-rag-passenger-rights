@@ -1,110 +1,178 @@
-# Agentic RAG — EU Air Passenger Rights (Reg. 261/2004)
+# Agentic RAG — EU Air Passenger Rights ✈️⚖️
 
-A chatbot that answers two kinds of question about EU air passenger rights: *"what am I entitled to?"*
-(answered from the actual law, always with a citation) and *"how much money do I get?"* (worked out by
-a calculator, not guessed by a model). It's built as a small LangGraph agentic workflow, runs entirely on
-your own machine with a local LLM, and the Streamlit UI lets you watch it think one step at a time.
-
-No paid APIs, no data leaving the box. The whole thing comes up with one command (`docker compose up`).
+A chatbot that tells you what you're owed when a flight is delayed, cancelled, or overbooked inside the
+EU — and exactly how much, with the law to back it up. Under the hood it's a small **LangGraph
+agentic-RAG workflow**: a local LLM that *looks the rules up* by grounded retrieval and *works the amount
+out* with a deterministic calculator, guessing neither. And it stays simple to run: entirely on your own
+machine, no paid APIs, nothing leaving the box, and up with a single command.
 
 > ⚖️ **Not legal advice.** Answers interpret Regulation (EC) No 261/2004 for general information only.
-> See [Caveats](#caveats).
+
+> **◆ Decision —** *Why this problem — EU flight-disruption compensation.* A real, everyday entitlement
+> that almost nobody claims, because the rules are fiddly and airlines are in no hurry to volunteer them.
+> The need is concrete and bounded: "tell me, in plain terms, what I'm owed and why."
+>
+> **Trade-off —** a narrow, well-defined domain instead of a broad travel assistant — which keeps the
+> corpus small and every answer checkable, at the cost of generality.
+
+> **◆ Decision —** *Why agentic RAG with a deterministic tool.* The question is half law, half
+> arithmetic: rights need grounded, citable retrieval, while the amount needs exact code rather than a
+> model's guess. A small agentic graph routes between the two, decomposes the "both" case, and grounds
+> the eligibility call in the regulation.
+>
+> **Trade-off —** more moving parts than a single chat prompt, bought as answers that are auditable
+> (every right cites the law) and exact (every euro comes from code).
 
 ---
 
-## Scope & problem statement
+## Description of the problem and the objective
 
-If your flight is cancelled or badly delayed inside the EU, the law (**Reg. 261/2004**) says you may
-be owed up to €600 — and almost nobody claims it. The rules are real but fiddly: the amount depends on
-how far you were flying and how late you arrived, and whether you get *anything* depends on whether the
-disruption was the airline's fault or an "extraordinary circumstance" like weather. Most people don't
-know the thresholds, and airlines aren't in a hurry to volunteer them. So there's a genuine, everyday
-need: *tell me, in plain terms, what I'm owed and why.*
+With that need established, the scope is narrow and deliberate. The system covers exactly one law —
+**Regulation (EC) No 261/2004**, the EU's rules on flight disruption — and is not a general travel
+assistant. That regulation governs three events:
 
-**Scope, narrowing from the top down.** This system is deliberately not a general travel assistant — it
-occupies one specific box, and it helps to see exactly which:
+- **denied boarding**
+- **delayed flight**
+- **cancelled flight**
 
-- **EU air passenger rights** — the broad field of EU consumer protection for air travel.
-  - **Regulation (EC) No 261/2004** (hereafter **Reg. 261/2004**) — the single in-force instrument this
-    system is built around. It does *not* cover everything about flying; it governs three **disruption
-    events**:
-    - **Denied boarding** (typically overbooking),
-    - **Cancellation**, and
-    - **Long delay** (the 3-hour-plus arrival-delay line drawn by the *Sturgeon* case law).
-  - For each of those events it defines the same set of remedies: **care/assistance** (meals, hotel),
-    **re-routing or refund**, and — the part everyone asks about — **cash compensation** of
-    **€250 / €400 / €600** by distance band.
+For each, it grants the same remedies:
 
-So when the EUR-Lex summary of this regulation is literally titled *"air passenger rights in case of denied
-boarding, delay or cancellation,"* that's the whole scope in one line. Everything outside that box —
-baggage fees, seat pricing, pets in the cabin, visas — is *not* this regulation's concern, and the system
-has to recognise that and decline rather than guess.
+- **care**
+- **re-routing**
+- **refund**
+- **cash compensation**
 
-These are the kinds of real questions people actually ask — and they don't all want the same thing:
+Everything else about flying is out of scope — the system has to recognise that and decline rather than
+guess:
+
+- baggage fees
+- seat pricing
+- pets in the cabin
+- visas
+
+The objective, then, is to answer the real-life questions people actually ask about this — which don't
+all want the same thing:
 
 - *"Can I get a refund if my flight is cancelled?"*
 - *"My flight is delayed by 5 hours — am I entitled to meals and a hotel?"*
 - *"What are my rights if I'm denied boarding because the flight was overbooked?"*
 - *"My Budapest (BUD) → London (LHR) flight was delayed 4 hours. How much compensation am I owed?"*
-- *"My Madrid → New York flight was cancelled because of a snowstorm. What are my rights, and how much will I get?"*
+- *"My Madrid → New York flight was cancelled by a snowstorm — what am I owed?"*
 - *"Am I covered flying from New York to Paris on a US airline?"*
-- *"Can I bring my dog in the cabin?"* — and the system has to know this one **isn't** its job.
+- *"Can I bring my dog in the cabin?"*
 
-That need is a poor fit for a plain chatbot, for three reasons that end up shaping the whole design:
+Step back from these examples and a general insight emerges: this need is a poor fit for a plain chatbot,
+for four reasons:
 
-- **Half the question is law, half is arithmetic.** "My Budapest–London flight was cancelled, how much
-  do I get?" needs a *grounded* legal answer (is this even compensable?) **and** an *exact* number
-  (which band, which threshold). A language model is good at the first and shaky at the second — ask a
-  small model to apply distance bands and a €400/€600 cutoff and it will occasionally just make the
-  number up. So the money has to come from real code, not the model.
-- **Looking things up has to be honest.** Answers about your rights should come from the actual
-  regulation, with a citation — not from the model's memory, which you can't audit.
-- **Some questions are out of scope.** "Can I bring my dog?" or "why are fares so high?" aren't covered
-  by this regulation. A naive chatbot answers anyway; this one should notice and decline.
+- **Grounded in the law.** Answers about your rights come from the actual regulation, with a citation —
+  not the model's memory, which you can't audit.
+- **Exact by construction.** The compensation amount is arithmetic, and a small model will sometimes
+  invent it, so it comes from real code rather than the model.
+- **Not one-size-fits-all.** The questions don't all want the same thing — rights, an amount, both, or
+  nothing in scope — so one path can't serve them.
+- **Knows its lane.** Many questions fall outside this regulation; the system should recognise those and
+  decline rather than guess.
 
-So the model needs help: retrieval to stay grounded, a calculator to get the number right, and some
-structure to keep it in its lane. That combination — an LLM given tools and retrieval — is the core of
-what's built here.
+Put together, those four needs point to four pieces:
 
-### What it does
+- **RAG** to stay grounded in the law
+- **calculator tool** to get the number right deterministically
+- **conditional routing** to send each question down the right path
+- **out-of-scope firewall** to decline what isn't covered
 
-Concretely, that comes out as four kinds of question you can ask — each answered a different way:
+The routing comes first — it sorts every question into one of four kinds, each handled a different way:
 
-- **"What are my rights?"** → a plain-language answer grounded in the law, **with a citation** (which
-  document, which article). If the law doesn't actually support an answer, it says so rather than bluff.
-- **"How much am I owed?"** → an **exact euro figure**: the right €250 / €400 / €600 band for your
-  distance, after the 3-hour threshold and the eligibility check (weather gets you €0, the airline's own
-  strike doesn't).
-- **"Both — what am I owed *and* why?"** → a single answer that carries the grounded legal explanation
-  **and** the computed amount together.
-- **Anything off-topic** (baggage fees, visas, pricing…) → a polite "that's outside what I cover," never
-  a made-up rule.
+- **"What are my rights?"** → a plain-language answer grounded in the law, with a citation. If the law
+  doesn't support an answer, it says so rather than bluff.
+- **"How much am I owed?"** → a figure the calculator works out from the flight's route (origin and
+  destination), the delay, the disruption type, and whether re-routing was offered — then checked
+  against eligibility.
+- **"What am I owed *and* why?"** → a single answer that carries the grounded legal explanation
+  and the computed amount together.
+- **"Off-topic"** → a polite "that's outside what I cover," never a made-up rule.
 
-*How* it tells these apart and produces each answer is the [How it works](#how-it-works) section below;
-this is just what you get back.
+The third case — **"What am I owed *and* why?"** — needs more than a single lane: it breaks into two
+subtasks, looking up the rights and computing the amount, that can run independently and then be combined.
+That's subtask decomposition and independent execution, again surfacing straight from the domain.
+
+Taken together, these domain insights define the architecture that follows — each one becomes a concrete
+piece of the design:
+
+> **◆ Decision —** *Four question types → explicit conditional routing.* An intake step classifies each
+> question into one of the four lanes and a router sends it down the matching path — autonomous
+> decision-making over a fixed, predictable set of routes.
+>
+> **Trade-off —** routing can misread a borderline question, but the lanes overlap enough that the answer
+> stays correct, and a fixed route set is far easier to test than free-form tool choice.
+
+> **◆ Decision —** *The off-topic lane is a hard firewall, not a best-effort answer.* A question outside
+> Reg. 261/2004 routes to a dedicated fallback that declines — it never improvises a rule or an amount.
+>
+> **Trade-off —** the system says "I can't help with that" more often than a general chatbot would, in
+> exchange for never fabricating law or numbers outside its competence.
+
+> **◆ Decision —** *The "how much?" half → a deterministic, non-retrieval tool.* The amount is pure
+> arithmetic over the law's distance bands and thresholds, so it lives in a model-free calculator — the
+> second tool alongside retrieval, and the one that isn't retrieval.
+>
+> **Trade-off —** the calculator must be fed clean inputs (airports, delay), but in return the figure
+> can't drift and doubles as the eval's ground truth.
+
+> **◆ Decision —** *Rights and eligibility → a modular RAG subgraph.* Both "what are my rights?" and the
+> "is this even compensable?" judgement need grounded, citable law, so retrieval is a dedicated
+> corrective-RAG subgraph callable from the main graph (and not counted among its nodes).
+>
+> **Trade-off —** a subgraph boundary to maintain, bought as grounding that flows through one reusable,
+> independently testable place.
+
+> **◆ Decision —** *The "both" question → decomposition into independent subtasks.* A mixed question fans
+> out into a rights/eligibility branch and a calculator branch that run independently and converge once —
+> decomposition and independent execution made literal.
+>
+> **Trade-off —** the fan-out/fan-in wiring is more intricate than a sequential path, bought as genuine
+> parallel decomposition rather than an asserted one.
+
+> **◆ Decision —** *Intermediate results live in one typed, shared state.* Extracted flight details, the
+> routing decision, retrieved chunks, the eligibility verdict, the computed amount — each node reads from
+> and writes to a single typed `AgentState` instead of passing arguments node to node.
+>
+> **Trade-off —** one schema to keep coherent across every node, bought as an inspectable record of how
+> far each query got — including the append-only trace the UI streams step by step.
 
 ---
 
-## Corpus & sources
+## Description of the data sources and corpus processing
 
 Everything here answers questions about **Reg. 261/2004**, so the corpus is built *around the regulation
-as the core*, with a few supporting documents that make that core usable. There are two distinct bodies of
-data — the **RAG corpus** (retrieved and cited as law) and the **airport reference data** (used only by
-the calculator) — and they're kept deliberately separate.
+as the core*, with a few supporting documents that make that core more usable. There are two distinct bodies of
+data, kept deliberately separate:
 
-### The RAG corpus — what retrieval reads over
+- **RAG corpus** — retrieved and cited as law
+- **airport data** — used to calculate the distance between airports
 
-A **frozen, dated snapshot** committed under `data/corpus/` — the single source of truth. The ChromaDB
-index is a **derived artifact** (gitignored), rebuilt from the corpus by an **idempotent**
-`python -m src.ingest`, so a fresh clone reproduces the *identical* index offline with no network access.
-Four documents, each playing a distinct role *relative to the core law*:
+Why airport distances at all? Because the regulation ties the compensation amount to *how far the flight
+was* — the €250 / €400 / €600 bands are distance bands — so working out what's owed means first working
+out the great-circle distance between the origin and destination airports, which needs their coordinates.
 
-| Document | Role relative to the core | Source |
-|----------|---------------------------|--------|
-| **Regulation (EC) No 261/2004** — full text | **The core**: the binding legal text itself | [EUR-Lex · CELEX 32004R0261](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32004R0261) |
-| **Commission Interpretative Guidelines (2024)** | How the Commission *reads* the text — fills gaps the bare articles leave (e.g. what counts as "extraordinary"), incorporating CJEU case law | [OJ C/2024/5687](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:C_202405687) |
-| **EUR-Lex legislative summary** | A neutral, structured *overview* of the regulation — a good retrieval target for "what does it cover" questions | [LEGISSUM:l24173](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=LEGISSUM:l24173) |
-| **Your Europe plain-language summary** | The same rights in *plain language* — matches how real users actually phrase questions, which improves retrieval | [Your Europe](https://europa.eu/youreurope/citizens/travel/passenger-rights/air/index_en.htm) |
+### RAG corpus
+
+There are two artifacts here, kept deliberately distinct:
+
+- **the corpus** (`data/corpus/`) — a **frozen, dated snapshot** committed to git: the single source of
+  truth.
+- **the vector index** (`data/chroma/`) — a **derived artifact** (gitignored), rebuilt from the corpus by
+  an **idempotent** `python -m src.ingest`.
+
+Because the index is rebuilt rather than stored, a fresh clone reproduces the *identical* index offline,
+with no network access. The corpus itself is four documents, each playing a distinct role *relative to the
+core law*:
+
+| Document | What it is |
+|----------|------------|
+| [**The regulation**](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32004R0261) | The binding law — the core that everything else supports. |
+| [**Official interpretation guidelines**](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:C_202405687) | How the Commission reads the law in practice — fills the gaps the bare articles leave. |
+| [**Summary of the regulation**](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=LEGISSUM:l24173) | A neutral, organized summary of what the regulation covers — a good match for "what does it cover?" questions. |
+| [**Plain-language guide for citizens**](https://europa.eu/youreurope/citizens/travel/passenger-rights/air/index_en.htm) | The same rights in everyday words — matches how real people phrase questions, which helps retrieval. |
 
 **Why anything beyond the regulation itself?** The bare legal text is necessary but not sufficient: it's
 terse, heavily cross-referential, and silent on much of the interpretation people actually need (the
@@ -114,35 +182,68 @@ text). Each supporting document closes a specific gap — the **guidelines** add
 question is phrased in — so retrieval has a grounded passage to return whether the question arrives in
 legal or colloquial language. All four are © European Union, reusable with acknowledgement.
 
-### The airport reference data — used by the calculator, *not* the corpus
+> **◆ Decision —** *The regulation is the core; three supporting documents each close a specific gap.*
+> The binding text, plus the Commission's interpretative guidelines (interpretation), the legislative
+> summary (structure), and a plain-language summary (everyday vocabulary).
+>
+> **Trade-off —** a little overlap and more sources to keep frozen, bought as a grounded passage to
+> return whether a question arrives in legal or colloquial language.
 
-The compensation calculator needs coordinates to compute great-circle distance, so it loads OpenFlights'
-`airports.dat` (IATA → lat/lon). This is **kept separate from the RAG corpus on purpose**: it's reference
-data for a deterministic tool, never retrieved, never cited as law. It also carries a different licence —
+### Airport data
+
+The calculator loads OpenFlights' `airports.dat` (IATA → lat/lon) for those coordinates. This is **kept
+separate from the RAG corpus on purpose**: it's reference data for a deterministic tool, never retrieved,
+never cited as law. It also carries a different licence —
 **ODbL** (OpenFlights.org), a copyleft stronger than the EU content's — which is a second reason to keep
 it out of the corpus and attribute it on its own.
 
 Full per-file licensing, provenance, and fetch methods live in [`data/SOURCES.md`](data/SOURCES.md).
 
-### Getting the data in — fetching, parsing, chunking
+### Corpus processing
 
 Two things made ingestion genuinely non-trivial, and both shaped the design:
 
 **Fetching was actively blocked.** The EUR-Lex web UI sits behind an AWS WAF that silently challenges
-`curl`, so the obvious "just download the page" approach fails. The regulation and the 2024 guidelines were
-instead pulled as structured (X)HTML from the Publications Office **Cellar REST API** (HTTP content
-negotiation), which serves the same authoritative text without the WAF challenge; the legislative summary
-came from the EUR-Lex **TXT/HTML export endpoint** via Python `requests` (whose default client passes
-where `curl` is blocked); the Your Europe page was reduced to its `<main>` content and frozen as Markdown.
-This is also *why the corpus is committed frozen* rather than fetched at build time — re-fetching is
-brittle and reproducibility shouldn't depend on a WAF's mood.
+`curl`, so the obvious "just download the page" approach fails. Each source needed its own way in:
 
-**Parsing was awkward because legal HTML isn't semantic.** The regulation marks each Article with a bare
-`Article N` paragraph (not an `<h*>` heading), recitals as `(N) …` lines wedged between "Whereas:" and
-"HAVE ADOPTED THIS REGULATION", and the OJ notices tag their section headings with a CSS class
-(`ti-grseq-1`) rather than heading tags. There's no single generic parser that respects all of that, so
-[`src/ingest.py`](src/ingest.py) **detects each document's type from its content** and dispatches to a
-structure-specific chunker (regulation / OJ notice / heading-structured HTML / Markdown).
+- **Regulation + 2024 guidelines** — pulled as structured (X)HTML from the Publications Office **Cellar
+  REST API** (HTTP content negotiation), which serves the same authoritative text without the WAF challenge.
+- **Legislative summary** — fetched from the EUR-Lex **TXT/HTML export endpoint** via Python `requests`,
+  whose default client passes where `curl` is blocked.
+- **Your Europe page** — reduced to its `<main>` content and frozen as Markdown.
+
+This is also *why the corpus is committed frozen* rather than fetched at build time — re-fetching is
+brittle, and reproducibility shouldn't depend on a WAF's mood.
+
+> **◆ Decision —** *Freeze and commit the corpus; treat the index as derived.* `data/corpus/` is a
+> dated snapshot in git, while the ChromaDB index is gitignored and rebuilt by an idempotent
+> `python -m src.ingest`.
+>
+> **Trade-off —** the repo carries the source text, but a fresh clone reproduces the identical index
+> offline — no dependence on a flaky re-fetch through EUR-Lex's WAF.
+
+**Parsing was awkward because legal HTML isn't semantic.** The structure a chunker needs is there, but
+it's never marked with proper heading tags:
+
+- **Articles** — flagged by a bare `Article N` paragraph, not an `<h*>` heading.
+- **Recitals** — `(N) …` lines wedged between "Whereas:" and "HAVE ADOPTED THIS REGULATION".
+- **OJ-notice section headings** — tagged with a CSS class (`ti-grseq-1`) rather than heading tags.
+
+No single generic parser respects all of that, so [`src/ingest.py`](src/ingest.py) **detects each
+document's type from its content** and dispatches to a structure-specific chunker (regulation / OJ notice /
+heading-structured HTML / Markdown).
+
+> **◆ Decision —** *The fetching-and-parsing path is admittedly cumbersome, but the off-the-shelf
+> alternatives weren't better — so it's kept as-is for now.* Before settling on per-type detection plus
+> structure-specific chunkers, a few drop-in routes were tried and fell short: Microsoft's **`markitdown`**
+> (HTML→Markdown) flattened exactly the `Article N` / `ti-grseq-1` cues the chunker keys off; **LLM
+> preprocessing** to normalize structure was both unreliable on the bare markup and a clash with the
+> local-only, no-paid-API constraint; and an **`eurlex` Python package** didn't cover all four document
+> types cleanly.
+>
+> **Trade-off —** more bespoke parsing code to own than a single library call, kept because it's the only
+> path that reliably preserves the legal boundaries citations depend on — revisitable if one of those
+> tools matures.
 
 **Chunking follows the law's own structure, not fixed token windows.** Because a citation has to point at a
 *real provision*, chunks are cut on **legal boundaries** — one chunk per **Article** or **Recital** (per
@@ -153,126 +254,231 @@ coherent, self-contained provision rather than an arbitrary 512-token slice that
 loader is **generic and drop-in**: add a file to `data/corpus/`, re-run `python -m src.ingest`, and it's
 detected, chunked by its structure, embedded, and indexed — no code changes.
 
+> **◆ Decision —** *Chunk on legal boundaries, not fixed token windows.* One chunk per Article /
+> Recital (per Section for the guidelines, per heading for the summaries), sub-splitting only oversized
+> articles on paragraph boundaries with a one-paragraph overlap.
+>
+> **Trade-off —** chunking is structure-specific (a per-document-type chunker) rather than one generic
+> splitter, in exchange for citations that always point at a real, self-contained provision.
+
 ### Caveats
 
 Three caveats about what this corpus — and the rules it encodes — does and doesn't cover:
 
-- **The 2025 reform is *not* encoded.** Reg. 261/2004 is being reformed (Council position June 2025;
-  Parliament TRAN committee October 2025) but isn't enacted yet. This corpus is the **current, in-force**
-  snapshot: the 3-hour threshold and the €250 / €400 / €600 bands. The proposed new thresholds are
-  deliberately left out.
+- **There's an upcoming reform.** Reg. 261/2004 is being reformed (Council position June 2025;
+  Parliament TRAN committee October 2025) but isn't enacted yet.
 - **Coverage is asymmetric.** Flights *leaving* the EU are covered on any airline; flights *into* the EU
-  are covered only on EU airlines. The system reflects this — and it's one of the two cases the eval
-  flags as still imperfect.
-- **Not legal advice.** General information only. For a real claim, check the official texts or talk to a
-  qualified adviser.
+  are covered only on EU airlines.
+- **One source is broader than the core.** The Your Europe plain-language summary covers air passenger
+  rights more generally than Reg. 261/2004's three disruption events, so retrieval can occasionally
+  surface a passage from it that strays a little beyond the regulation's strict scope.
+
+> **◆ Decision —** *The Your Europe summary's mild scope creep is known and kept as-is for now.* Its
+> plain-language phrasing is what lets retrieval match the colloquial way users actually ask, so it earns
+> its place; the occasional out-of-scope passage is an accepted limitation rather than something pruned.
+>
+> **Trade-off —** a little scope creep at the edges, kept in exchange for markedly better retrieval on
+> everyday-vocabulary questions — revisitable if the drift ever proves material.
 
 ---
 
-## Architecture
+## Overview of the system architecture and justification of design decisions
 
-What it's built with, where the code lives, and how the graph actually runs.
+What it's built with, where the code lives, and how the graph actually runs — section by section:
+
+- **Tech stack**
+- **Project structure**
+- **System design**
+- **Main graph**
+- **RAG subgraph**
+- **Tools**
+- **Models**
 
 ### Tech stack
-
-Each package does one job:
 
 | Package | Role |
 |---|---|
 | **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
-| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
-| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
-| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
-| **Docker / compose** | packages the app and Ollama together for a one-command run |
+| **Ollama** | inference — runs the LLM and the embedding model locally |
+| **ChromaDB** | retrieval — the vector store for the embedded corpus |
+| **Streamlit** | UI — one tab per layer, building up to the Agent tab |
+| **Docker** | packaging — bundles the app and Ollama for a one-command run |
 
-Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
-`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
-seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
-overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
-`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
-not a rewrite. The two local models it runs (and *why* those two) are covered under
-[Model choices](#model-choices) below.
+> **◆ Decision —** *Ollama as the local model runtime.* With paid APIs ruled out, Ollama serves both the
+> LLM and the embedding model locally behind one OpenAI-style interface — a single dependency to pull,
+> run, and point `OLLAMA_URL` at, with no torch/CUDA stack to install and manage.
+>
+> **Trade-off —** capped at models that fit modest local hardware, bought as zero
+> cost, full privacy, and a reproducible offline stack — and the `LLM_BACKEND` seam keeps a swap cheap.
+
+> **◆ Decision —** *ChromaDB as the vector store.* An embedded, file-persisted store (`data/chroma/`)
+> that needs no separate server or container — `pip install`, point it at a path, done — which fits a
+> small, single-machine corpus and keeps the one-command run intact.
+>
+> **Trade-off —** not built for the huge-scale or multi-node search a dedicated vector DB targets, but at
+> this corpus size that ceiling is irrelevant, and the zero-ops simplicity is worth more.
 
 ### Project structure
 
-Here's where everything lives in the repo:
-
 ```
-config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
-streamlit_app.py       # the UI (one tab per layer); ui_components.py = shared renderers
-src/
-  llm.py               # get_llm() behind the LLM_BACKEND seam
-  state.py             # the typed AgentState (+ append-only trace reducer)
-  graph.py             # the main 7-node graph + run_agent()
-  rag.py               # the compiled corrective-RAG subgraph
-  tools.py             # @tool retrieve_passenger_rights + @tool calculate_compensation
-  calculator.py        # pure, deterministic Art. 7 logic (haversine + band table)
-  ingest.py            # generic drop-in corpus loader → structure-aware chunkers → Chroma
-  store.py             # Chroma client + Ollama embeddings
-eval/                  # eval_set.yaml + functional_eval.py + loadtest.py
-tests/test_calculator.py
-docker/                # entrypoint.sh + prepare.py (wait for Ollama → pull models → ingest)
-Dockerfile  docker-compose.yml  .dockerignore
-data/corpus/           # the frozen legal corpus (committed); data/chroma/ is derived (gitignored)
-notes/                 # design proposal, decisions, eval results, review findings
+src/                      # application code
+  llm.py                  # talks to the local LLM
+  state.py                # data shared between steps
+  graph.py                # the agent — wires the steps together
+  rag.py                  # retrieval with self-correction
+  tools.py                # the two tools: search + calculator
+  calculator.py           # compensation math (no LLM)
+  ingest.py               # loads documents into the search index
+  store.py                # vector store + embeddings
+eval/                     # correctness + speed tests
+  eval_set.yaml           # 15 test questions + expected answers
+  functional_eval.py      # checks the answers are correct
+  loadtest.py             # measures speed
+tests/                    # unit tests
+  test_calculator.py      # the calculator's tests
+docker/                   # container setup
+  entrypoint.sh           # runs when the container starts
+  prepare.py              # pulls models + builds the index
+data/                     # documents + search index
+  corpus/                 # source documents (the law)
+  chroma/                 # search index (auto-built)
+notes/                    # design docs & decisions
+config.py                 # all settings — start here
+streamlit_app.py          # the app — run this
+ui_components.py          # shared UI pieces
+Dockerfile                # builds the app image
+docker-compose.yml        # runs app + Ollama together
+docker-compose.gpu.yml    # optional NVIDIA GPU override
+.dockerignore             # files excluded from the image
 ```
 
-Ingestion (`src/ingest.py`) is the generic, structure-aware drop-in loader detailed in
-[Corpus & sources](#corpus--sources) above.
+A few points worth calling out:
 
-### How it works
+- **Drop-in ingestion** — generic, structure-aware corpus loader (`src/ingest.py`)
+- **Pinned & isolated** — pinned dependencies and Python version (stdlib `venv`)
+- **Deterministic** — reproducible runs (`temperature=0`)
+- **One place for config** — every knob, env-overridable (`config.py`)
 
-It's worth being precise about what this is, because it's easy to oversell. In the vocabulary of
-Anthropic's [*Building Effective Agents*](https://www.anthropic.com/engineering/building-effective-agents),
-this is a **workflow**, not an autonomous agent: an **augmented LLM** — a model given retrieval and a
-calculator — orchestrated through predefined code paths, rather than a model that decides its own next
-move. That's deliberate. The task has a known, fixed shape (work out what's being asked → look up the
-law and/or compute the amount → merge them), so a fixed graph is more predictable and far easier to
-evaluate than letting a 3B model free-wheel.
+> **◆ Decision —** *Flat modules, not nested packages.* `src/` is a flat set of files (`graph.py`,
+> `rag.py`, `tools.py`, `calculator.py`, …); abstraction is introduced only when a module genuinely
+> earns splitting.
+>
+> **Trade-off —** less upfront scaffolding than a layered package tree, in exchange for a small codebase
+> you can read top to bottom with no indirection to chase — while the required agent architecture (graph,
+> typed state, RAG subgraph, `@tool`s) stays structured regardless.
 
-Two standard workflow patterns from that article show up directly: **routing** (a node classifies each
-question and sends it down the right path) and **parallelization** (the legal lookup and the calculation
-run as independent branches and rejoin at the end). The part that's genuinely *agentic* is narrower: the
-corrective-RAG loop grades its own retrieval and rewrites the query when it came back weak — an
-evaluator-optimizer loop that reacts to its own output instead of following a fixed path. These map onto
-the same vocabulary in LangGraph's own
-[workflows-and-agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents) (routing,
-parallelization, evaluator-optimizer), which is the framework-level statement of the same distinction.
+> **◆ Decision —** *No build tool — plain commands over a Makefile.* No Make / Poetry / conda / uv; just
+> stdlib `venv`, a pinned `requirements.txt`, and the handful of commands documented in the README.
+>
+> **Trade-off —** you copy-paste a few commands instead of `make run`, but there's zero extra tooling to
+> install or learn and every step stays explicit.
 
-Concretely it's **two LangGraph graphs, each with its own typed state**: a main graph that runs the
-overall flow, and a separate RAG subgraph it calls for retrieval. They don't share a state object — the
-main graph hands the subgraph a query and maps the result back at the boundary (the standard LangGraph
-pattern for a subgraph with a different schema). Each graph is below, followed by the state object it
-carries.
+> **◆ Decision —** *Config is an env-overridable seam, which is also what makes Docker work.* Every knob
+> lives in `config.py` but can be overridden by an env var — so the same code runs three ways (local
+> venv, all-in-Docker, Docker-app + host Ollama) just by pointing `OLLAMA_URL` at a different address, no
+> source changes.
+>
+> **Trade-off —** every setting has to be read through the config seam rather than hardcoded, bought as
+> one image that reconfigures itself per environment from the outside.
 
-### The main graph (`src/graph.py`) — 7 nodes
+### System design
 
-```
-                       ┌─────────┐
-  user query  ───────▶ │ intake  │  pull out flight details + classify the question
-                       └────┬────┘
-                            ▼
-                       ┌─────────┐
-                       │ router  │  decide which path, write the decision into state
-                       └────┬────┘
-          ┌─────────────────┼───────────────────────────┬──────────────────┐
-   rights_info        compensation_calc / mixed                         out_of_scope
-          │                 │  (planner splits a mixed question in two)        │
-          ▼                 ▼                                                  ▼
-     ┌─────────┐     ┌──────────────── fan-out ───────────────┐          ┌──────────┐
-     │   rag   │     │  rag → eligibility    ‖    calculator   │          │ fallback │
-     │(subgraph)     │  (was it the airline's │  (the actual   │          └────┬─────┘
-     └────┬────┘     │   fault?)             │   €250/400/600) │               │
-          │          └──────────────── fan-in ────────────────┘               │
-          │                          │                                         │
-          └──────────────┬───────────┴─────────────────────────────────────────┘
-                         ▼
-                   ┌───────────┐
-                   │ synthesize│  stitch the pieces together + apply the eligibility gate:
-                   └─────┬─────┘  final = eligible ? amount : €0   (plain code, no model)
-                         ▼
-                   final answer
-```
+The design isn't invented from scratch here — it falls out of the decisions the problem already forced.
+The [Description of the problem](#description-of-the-problem-and-the-objective) concluded six, each rooted
+in the goal and the domain rather than in the technology:
+
+- **Conditional routing** — classify each question and send it down the matching lane
+- **Out-of-scope firewall** — decline anything outside Reg. 261/2004 instead of guessing
+- **Deterministic calculator tool** — the non-retrieval tool that computes the amount
+- **Modular RAG subgraph** — grounded, cited law for both rights and the eligibility call
+- **Decomposition + independent execution** — the "both" question fans out into parallel branches
+- **Typed shared state** — intermediate results accumulate in one inspectable object
+
+What follows turns those into a concrete graph — and it's worth being precise about what kind of system
+that is. Two references share a single
+vocabulary for systems like this — Anthropic's
+[*Building Effective Agents*](https://www.anthropic.com/engineering/building-effective-agents) and
+LangChain's [workflows-and-agents guide](https://docs.langchain.com/oss/python/langgraph/workflows-agents)
+— built on three ideas:
+
+- **Augmented LLM** — the building block: a model given retrieval, tools, and memory
+- **Workflow** — augmented LLMs orchestrated through *predefined* code paths
+- **Agent** — a model that *dynamically directs* its own process and tool use
+
+By that vocabulary this system is a **workflow**, not an agent: an augmented LLM (retrieval plus a
+calculator) wired through a fixed graph — built on the standard **routing** and **parallelization**
+patterns — rather than a model that picks its own next move. That's
+deliberate — the task has a known, fixed shape:
+
+1. work out what's being asked
+2. look up the law and/or compute the amount
+3. merge them
+
+Pinning that shape into a fixed graph — rather than letting a small local model free-wheel — is
+advantageous on several fronts:
+
+- **Deterministic** — the same question takes the same path to the same answer (`temperature=0`), with no
+  surprise tool calls
+- **Easier to evaluate** — a fixed set of routes and outputs can be measured against ground truth; a
+  free-wheeling agent is far harder to pin down
+- **Simpler** — fewer moving parts to reason about, debug, and keep correct
+- **Lighter on resources** — no exploratory tool-calling loops burning extra LLM calls, so it fits a
+  small local model on modest hardware
+- **A baseline** — a clear, measured starting point a more agentic version can later be compared against
+
+Concretely it's **two LangGraph graphs**, each with its own typed state:
+
+- **main graph** — runs the overall flow
+- **RAG subgraph** — a separate graph the main graph calls for retrieval
+
+The main graph puts the two standard workflow patterns to work directly:
+
+- **routing** — a node classifies each question and sends it down the right path
+- **parallelization** — the legal lookup and the calculation run as independent branches and rejoin at the end
+
+The RAG subgraph runs the corrective-RAG (evaluator-optimizer) pattern as a short loop:
+
+- **retrieve** — pull the top-_k_ passages for the query
+- **grade** — judge whether they actually answer the question
+- **rewrite & retry** — if they're weak, rephrase the query and retrieve again (bounded)
+- **generate** — write a grounded, cited answer from what survived
+
+The two graphs don't share a state object — the main graph hands the subgraph a query and maps the result
+back at the boundary (the standard LangGraph pattern for a subgraph with a different schema). Each graph is
+below, followed by the state object it carries.
+
+Now that the structure is concrete, it's worth being clear that "workflow" doesn't mean the model is on
+rails — several points hand a real decision to the LLM rather than hardcoding it:
+
+- **Self-correcting retrieval** — corrective-RAG grades its own results and *rewrites the query* to retry
+  when they're weak — an evaluator-optimizer loop, and the most clearly *agentic* part.
+- **LLM-driven routing** — which lane a question takes is the model's classification, not a keyword rule
+  (a real decision, though only among predefined branches).
+- **Subtask decomposition** — for a "both" question, the planner has the model break it into concrete
+  subtasks rather than applying a hardcoded split (with a fixed fallback if the output doesn't parse).
+- **Autonomous eligibility call** — the model judges whether a disruption was within the carrier's
+  control (the "extraordinary circumstances" test) instead of matching a fixed table.
+- **Relevance grading** — the grader is the model deciding whether retrieved passages actually answer the
+  question, with a distance floor only as a backstop.
+
+> **◆ Decision —** *A directed workflow, not an autonomous agent.* The graph governs control flow
+> through predefined paths; the model fills individual steps but never chooses the next move.
+>
+> **Trade-off —** less open-ended autonomy, bought back as predictability and genuine evaluability —
+> the right call for a 3B model on a fixed-shape task.
+
+> **◆ Decision —** *Two graphs, each with its own typed state.* The main graph and the RAG subgraph
+> don't share a state object; the main graph hands the subgraph a query and maps just the result
+> fields back at the boundary.
+>
+> **Trade-off —** a small boundary-mapping step to maintain, in exchange for a RAG subgraph that stays
+> independently testable and reusable (both the rights path and the eligibility branch call it).
+
+### Main graph
+
+![Main graph — intake → router → (rag · planner → calculator · fallback) → eligibility → deferred synthesize → end](docs/main_graph.png)
+
+*Generated from the live compiled graph — regenerate with `docs/generate_diagrams.py`.*
 
 Reading it node by node:
 
@@ -292,12 +498,28 @@ Reading it node by node:
   chance to hallucinate.
 - **`fallback`** handles off-topic questions — the hallucination firewall.
 
+> **◆ Decision —** *`synthesize` is plain code that owns the eligibility gate; the calculator stays
+> eligibility-agnostic.* The calculator returns only the candidate amount, and `synthesize`
+> deterministically merges the already-grounded parts and sets `final = eligible ? amount : €0` — no
+> model call.
+>
+> **Trade-off —** the "is it compensable?" judgement and the "how much?" arithmetic stay decoupled and
+> separately testable, at the cost of the gate living one node away from the calculator that produced
+> the amount.
+
 The edges are where the parallelization lives. After the router the graph branches four ways; for money
 and mixed questions the two branches — `rag → eligibility` and `calculator` — run **in parallel and then
 converge once** at `synthesize`. That fan-out → fan-in is "decompose into subtasks and run them
 independently" made literal rather than just claimed. Because the branches are different lengths,
 `synthesize` is a *deferred* node, so LangGraph waits for both sides and joins them exactly once instead
 of firing twice.
+
+> **◆ Decision —** *Compensation and mixed queries fan out into independent branches that converge
+> once.* `rag → eligibility` and `calculator` run as parallel branches and rejoin at a *deferred*
+> `synthesize`, so "decompose into subtasks and run them independently" is literal, not asserted.
+>
+> **Trade-off —** the deferred-join wiring is more intricate than a straight sequential path, bought as
+> real parallel decomposition and a single clean convergence point.
 
 The nodes don't pass arguments to each other — they read from and write to one shared, typed object,
 `AgentState`. Each node returns a partial dict that LangGraph merges in:
@@ -324,17 +546,22 @@ an append-only reducer (`operator.add`) instead of being overwritten, so every n
 parallel branches — *adds* its own entry. That append-only log is exactly what the UI streams to show
 the run node by node.
 
-### The RAG subgraph (`src/rag.py`)
+> **◆ Decision —** *`trace` is an append-only reducer field, not an overwritten one.* It's typed
+> `Annotated[list, operator.add]`, so every node — including the two parallel branches — *appends* its
+> entry instead of replacing the field.
+>
+> **Trade-off —** one field behaves differently from the rest of the last-write-wins state, but that's
+> exactly what lets both fan-out branches write the trace at once (a plain channel would error on the
+> concurrent write at the join) — and it yields the ordered, node-by-node log the UI streams.
+
+### RAG subgraph
 
 Retrieval is its own compiled graph, attached to the main graph as a single `rag` node and shared by
 both the rights path and the eligibility branch. This is the most self-correcting part of the system:
 
-```
-retrieve → grade the results → good enough?  ──yes──▶ generate the answer
-                                    │
-                                    └──no──▶ rewrite the query → retrieve again
-                                            (bounded: at most REWRITE_MAX_RETRIES tries)
-```
+![Corrective-RAG subgraph — retrieve → grade → generate, or rewrite the query and retrieve again (bounded loop)](docs/rag_subgraph.png)
+
+*Generated from the live compiled graph — regenerate with `docs/generate_diagrams.py`.*
 
 Rather than trust the first retrieval, it grades the results; if they're weak it rephrases the query and
 retrieves again — capped at `REWRITE_MAX_RETRIES` so latency stays bounded. That grade-and-retry is the
@@ -345,6 +572,19 @@ conditionally rewrite/re-retrieve → generate), adapted here with a hard retry 
 the model judges relevance, with a cosine-distance floor as a safety net so a confidently-wrong model can't
 wave junk through. `generate` is told to answer *only* from what was retrieved — no outside knowledge, no
 invented figures.
+
+> **◆ Decision —** *Corrective RAG: grade the retrieval and rewrite the query when it's weak, but cap
+> the retries.* The loop reacts to its own output (retrieve → grade → conditionally rewrite/re-retrieve
+> → generate), bounded by `REWRITE_MAX_RETRIES`.
+>
+> **Trade-off —** an extra retrieval round-trip on weak hits, bounded so latency stays predictable —
+> this self-correcting loop is the most genuinely agentic part of the system.
+
+> **◆ Decision —** *Grade relevance with a hybrid of model judgement and a cosine-distance floor.* The
+> model judges relevance, with a distance threshold underneath as a safety net.
+>
+> **Trade-off —** a second, mechanical check to calibrate, so a confidently-wrong model can't wave junk
+> through on its own.
 
 The subgraph carries its own, smaller state — just the retrieval loop's working set, with no idea the
 larger agent exists:
@@ -366,12 +606,13 @@ kept fixed while `query` is the thing that gets rephrased and re-retrieved, boun
 the loop finishes, the main graph's `rag` node copies just `documents`, `answer`, and `citations` back
 into `AgentState` — the boundary mapping that keeps this subgraph independently testable and reusable.
 
-### The two tools (`src/tools.py`)
+### Tools
 
-The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s.
+Two tools do the work, both real LangChain `@tool`s: one for retrieval, one not.
 
-**`retrieve_passenger_rights(query: str, top_k: int = config.TOP_K) -> list[dict]`** — the retrieval tool,
-used inside the RAG subgraph.
+#### Retrieval tool
+
+**`retrieve_passenger_rights(query: str, top_k: int = config.TOP_K) -> list[dict]`**
 
 - `query` — a natural-language question about EU air passenger rights.
 - `top_k` — how many passages to return (defaults to `config.TOP_K`).
@@ -381,9 +622,17 @@ matched chunk's `text`, its citation `metadata` (source, article, title, url, �
 = closer). It's the only thing that reads the corpus, which is why grounding flows through exactly one
 place.
 
+> **◆ Decision —** *Ground every rights answer and always cite; one tool is the sole corpus reader.*
+> Rights answers come only from retrieved chunks, each carrying its `source` + `article`, and
+> `retrieve_passenger_rights` is the single place that touches the corpus.
+>
+> **Trade-off —** the model can't lean on its own memory, so an unsupported question gets an honest
+> "the law doesn't cover this" instead of a fluent guess.
+
+#### Non-retrieval tool
+
 **`calculate_compensation(origin_iata: str, dest_iata: str, delay_hours: float, disruption_type: str =
-"delay", rerouting_offered: bool = False) -> dict`** — the non-retrieval tool, and the reason the numbers
-are trustworthy.
+"delay", rerouting_offered: bool = False) -> dict`**
 
 - `origin_iata` / `dest_iata` — IATA codes of the departure and final-destination airports (e.g. `"BUD"`,
   `"LHR"`).
@@ -395,22 +644,35 @@ are trustworthy.
 Given those inputs it resolves both airports' coordinates (OpenFlights), computes great-circle distance,
 picks the €250 / €400 / €600 band, applies the 3-hour threshold and the 50% reduction rule, and returns a
 dict (`distance_km`, `band`, `final_amount_eur`, a plain-language `explanation`, …) — **with no model
-anywhere in it.** That's what makes the amounts exact, and it's also why the calculator's output can double
-as the *ground truth* for the eval: a model-free function can't drift.
+anywhere in it.**
 
-One design decision worth calling out here, because it's a concession to the small model rather than to the
-law: the calculator keys off **IATA city/metropolitan codes, not specific airport codes** (via a
-`METRO_ALIASES` fallback in `src/calculator.py`). When the intake step extracts airports from free text,
+> **◆ Decision —** *The compensation figure comes from code, not the model.* A small model asked to
+> apply the bands and the 3-hour cutoff will occasionally invent the number, so the amount is computed
+> by the deterministic, LLM-free calculator and the model never produces it.
+>
+> **Trade-off —** a model-free function can't drift, so the very same code doubles as the eval's ground
+> truth.
+
+The calculator also makes one concession to the small model rather than to the law: it keys off **IATA
+city/metropolitan codes, not specific airport codes** (via a `METRO_ALIASES` fallback in
+`src/calculator.py`). When the intake step extracts airports from free text,
 the 3B model reliably produces the *city* code a person thinks in — London → `LON`, Paris → `PAR` — but is
 much shakier at the exact airport (`LHR` vs `LGW` vs `STN`). OpenFlights' table only carries airport codes,
 so a bare lookup of `LON` would fail. The fallback maps each metro code to the city's principal airport,
 applied **only when the direct airport lookup misses** (so it never overrides a real airport code). Since
 the amount keys off the *distance band*, and a city's airports sit within a few km of each other relative
-to the ~1500/3500 km band edges, the representative airport is close enough — we traded a sliver of
-geographic precision for entity-extraction reliability, which is the right trade when the model is the
-weak link.
+to the ~1500/3500 km band edges, the representative airport is close enough.
 
-### Model choices
+> **◆ Decision —** *The calculator keys off IATA city/metropolitan codes, not specific airport codes.*
+> A `METRO_ALIASES` fallback maps a city code to its principal airport, applied only when a direct
+> airport lookup misses — a concession to the small model, which reliably extracts the city code
+> (`LON`, `PAR`) but is shaky on the exact airport (`LHR` vs `LGW`).
+>
+> **Trade-off —** a sliver of geographic precision for entity-extraction reliability — the right trade
+> when the model is the weak link, since a city's airports sit within a few km relative to the
+> ~1500/3500 km band edges.
+
+### Models
 
 **Developed on a MacBook Air (Apple M1, 8 GB RAM).** And 8 GB is the *whole* budget, shared: the OS, the
 Streamlit app, the Chroma vector store, and Ollama serving **two** models (the LLM *and* the embedder) all
@@ -431,35 +693,113 @@ what a local-only stack costs.
   pulling in torch / sentence-transformers — one local runtime serves both generation and retrieval,
   which keeps the install lean and the image small.
 
+> **◆ Decision —** *`qwen2.5:3b-instruct` — chosen for structured-output reliability under an 8 GB
+> budget.* A 3B model is about the ceiling for comfortable interactive use here; of those, Qwen2.5 3B
+> is notably strong at the JSON/structured output the intake-and-routing step depends on.
+>
+> **Trade-off —** prose polish (the small model shows its size on routing and the occasional rough
+> answer) for reliable structured extraction and fast local inference — and the seam makes swapping in
+> something larger trivial.
+
 ---
 
-## Evaluation & performance
+## Summary of the functional evaluation and performance test results
 
-The short version is below; full methodology and numbers are in
-[`notes/PHASE6_EVAL_RESULTS.md`](notes/PHASE6_EVAL_RESULTS.md). Ground truth is pinned to what
-Reg. 261/2004 *actually says* (every route distance recomputed from real coordinates before fixing the
-expected amount), not to whatever the model happens to output.
+How the system is measured and how it holds up — in four parts:
 
-**How the ground truth is built.** The eval set is a hand-authored YAML file
-([`eval/eval_set.yaml`](eval/eval_set.yaml)) — 15 questions spanning all four lanes (rights / compensation
-/ mixed / out-of-scope), each tagged with its expected `query_type`, and where applicable an `eligible`
-verdict, the gated `amount_eur`, and a set of acceptable citations (`any_of`). Each label is sourced
-deliberately, *against the law rather than against the system*:
+- **Evaluation set**
+- **Functional evaluation**
+- **Performance test**
+- **CPU vs GPU**
 
-- **Amounts** come from the deterministic calculator, not from a model — and the calculator is itself
+### Evaluation set
+
+The evaluation rests on two deliberate choices.
+
+**It scores the graph's intermediate state, not its final prose.** Rather than grade the free-text answer,
+it checks the structured values the nodes write into `AgentState`:
+
+- `query_type` — the routing label
+- `eligible` — the eligibility verdict
+- `final_eur` — the gated final amount (the calculator's candidate `final_amount_eur` after the eligibility gate)
+- `rag_citations` — the citations backing the answer
+
+A label, a boolean, an integer, and a citation set can be matched against ground truth; generated prose
+can't be, not reliably.
+
+**Its ground truth is anchored to the law, not to current output.** The targets survive a future
+code/corpus change instead of silently tracking whatever the graph happens to emit today.
+
+With that settled, the set itself. The eval set is a hand-authored YAML file
+([`eval/eval_set.yaml`](eval/eval_set.yaml)) — 15 questions, all
+grounded in Regulation (EC) No 261/2004, spanning all four lanes:
+
+- **rights**
+- **compensation**
+- **mixed**
+- **out-of-scope**
+
+Each question is tagged with:
+
+- `query_type` — the expected lane it should be routed to (every question)
+- `eligible` — whether compensation is actually due (where applicable)
+- `amount_eur` — the gated final compensation amount (where applicable)
+- `any_of` — a set of citations, any one of which counts as correct (where applicable)
+
+Each of those labels is derived deliberately — from the law, not from the system's own output:
+
+- `query_type` — set by hand from what the question asks under Reg. 261/2004: a rights question →
+  `rights_info`, an amount → `compensation_calc`, both → `mixed`, anything outside the regulation →
+  `out_of_scope` (a coverage/scope question still counts as in-scope, per Art. 3).
+- `eligible` — set by hand from the regulation's control test (own-staff strike → compensable; weather /
+  ATC → extraordinary → €0).
+- `amount_eur` — comes from the deterministic calculator, not from a model, and the calculator is itself
   unit-tested ([`tests/test_calculator.py`](tests/test_calculator.py)), so the expected € is a verified
   figure. Critically, every route's distance was **recomputed from real OpenFlights coordinates** before
   pinning the amount, because routes near a band edge (~1500 / ~3500 km) can flip the expected value — a
   wrong "expected" is worse than none.
-- **Eligibility** verdicts are set by hand from the regulation's control test (own-staff strike →
-  compensable; weather / ATC → extraordinary → €0).
-- **Citations** are matched on normalized `source` + `article` as a set-membership (recall) check against
-  the current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones
-  fails.
-- Anchoring to the law (not to current output) is deliberate: the targets **survive a future code/corpus
-  change** instead of silently tracking whatever the graph happens to emit today. The two cases the small
-  model still gets wrong are flagged in the set as `known_fail`, so the runner separates a *known gap* from
-  a *new regression*.
+- `any_of` — matched on normalized `source` + `article` as a set-membership (recall) check against the
+  current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones fails.
+
+Two cases the small model is known to get wrong are flagged `known_fail` in the set:
+
+- a **coverage** question about a non-EU→EU flight on a non-EU carrier that it misroutes as off-topic
+- a delay caused by **air-traffic-control restrictions** that it wrongly treats as compensable instead of
+  extraordinary
+
+The runner reports these apart from the rest, so a long-standing limitation is never mistaken for a newly
+introduced bug.
+
+> **◆ Decision —** *Score the graph's intermediate state, not its final answer.* The eval checks the
+> structured values each node writes into `AgentState` (`query_type`, `eligible`, `final_eur`,
+> `rag_citations`), never the generated prose.
+>
+> **Trade-off —** it can't catch a poorly-worded-but-correct answer, but a label, a boolean, an integer,
+> and a citation set are exactly matchable against ground truth while free text isn't — so every dimension
+> gets an unambiguous pass/fail.
+
+> **◆ Decision —** *Ground truth is anchored to what Reg. 261/2004 says, not to the system's output.*
+> Amounts come from the unit-tested calculator (distances recomputed from real coordinates),
+> eligibility from the regulation's control test, citations by set-membership against the corpus.
+>
+> **Trade-off —** the targets can diverge from current output and surface as failures, but they measure
+> correctness rather than self-consistency and survive a future code or corpus change.
+
+> **◆ Decision —** *Score citations by recall, not exact match.* A produced citation set passes if it
+> contains at least one accepted `source` + `article` (set-membership), with label-tolerant article
+> matching (`Art. 7` ≡ `Art. 7(1)`) — over-citing extra valid articles is fine; missing all the required
+> ones fails.
+>
+> **Trade-off —** it won't catch citation noise, but it rewards grounding an answer in *a* correct
+> provision rather than reproducing one exact label — the realistic bar when several articles can
+> legitimately back the same answer.
+
+> **◆ Decision —** *Flag the small model's known misses as `known_fail` and tally them separately.* The
+> two cases the 3B model reliably gets wrong are tagged in the eval set, scored like any other case, but
+> reported apart from the rest.
+>
+> **Trade-off —** a little bookkeeping in the set, bought as a baseline that tells a long-standing known
+> limitation apart from a newly introduced regression.
 
 Run it yourself:
 
@@ -469,7 +809,7 @@ python -m eval.loadtest                   # the load test (N=50) + per-node timi
 pytest tests/test_calculator.py           # the deterministic calculator's unit tests
 ```
 
-### Is it correct? (15-question functional eval, `qwen2.5:3b-instruct`, temperature 0)
+### Functional evaluation
 
 | Dimension | Score |
 |---|---|
@@ -479,8 +819,20 @@ pytest tests/test_calculator.py           # the deterministic calculator's unit 
 | Citation present | **7/7 (100%)** |
 | Citation correct | 6/7 (86%) |
 
-In plain terms: **the money is always right, and so is the grounding.** Every amount and every
-eligibility call was correct, and every rights answer came with a real citation — nothing invented.
+**Why the rows aren't all out of 15.** Each dimension is scored only on the questions that pin a
+target for it, and the two known-fails above are tallied separately rather than folded into these
+counts:
+
+- **Routing** applies to every question — the 14 is the 15 minus the one known-fail routing case,
+  which is reported on its own.
+- **Eligibility** and **Amount** apply only to the questions that carry a compensation figure (the
+  calculator and mixed cases), again minus the one known-fail counted separately — 8 each.
+- **Citation present / correct** applies only to the 7 rights and mixed questions that must cite the
+  law; calculator-only and off-topic questions carry nothing to cite.
+
+In plain terms: **the money is always right, and the grounding nearly always is.** Every amount and every
+eligibility call was correct, every rights answer came with a real citation — nothing invented — and all
+but one pointed at the right provision.
 The one soft spot is *sorting questions into the right lane*: when a question mixes a disruption with a
 word like "refund" or "how much," the small model tends to read it as a money question. The saving grace
 is that it barely matters for the answer — the money and mixed lanes both run the eligibility branch, so
@@ -488,12 +840,12 @@ even a misrouted question comes out with the **correct number**; only the path i
 The fix (force the intake step to fill a strict schema instead of replying freely) is understood and
 queued for a later review phase.
 
-### Is it fast enough? (load test, N=50, sequential)
+### Performance test
 
 - **One query takes ~18 s** on this hardware (mean 17.8 s, p95 25.7 s). The fastest is the off-topic
   path at 2.5 s — it skips the model entirely.
 - **All of that time is the model thinking.** The LLM nodes are 100% of the work; the calculator, the
-  vector search, the routing and the answer-assembly add up to basically nothing (0.0%). The system is
+  vector search, the routing and the answer-assembly add up to basically nothing. The system is
   slow *only* because of the local model, not because of anything in our code.
 - **The single most expensive step is the RAG node (~69%)** — reading the law and writing the grounded
   answer — followed by intake (~24%). The only lever that moves latency is the number and cost of LLM
@@ -502,17 +854,17 @@ queued for a later review phase.
   saves real time. The next lever — skip the heavy RAG step for pure money questions, which don't need
   it — is identified and deferred to the review phase.
 
-### CPU vs GPU (the Docker caveat)
+### CPU vs GPU
 
 Same queries, same settings, host Metal GPU vs the CPU-only container: the in-container model is
 **~5.5× slower** end to end (mean 25 s → 140 s on the LLM-heavy routes). A bare single-prompt benchmark
 is only ~2.2× — the gap widens in practice because each query fires several model calls and the RAG step
 does a big context prefill, which is where CPU hurts most. That ~5.5× is the entire reason the host-Ollama
-paths (Quick start options 2 and 3) exist — and on a Mac they're the *only* way to get the GPU at all.
+paths (options 2 and 3 below) exist — and on a Mac they're the *only* way to get the GPU at all.
 
 ---
 
-## Quick start & usage
+## Installation and running guide
 
 The system is **two pieces**, and which combination you run is the only real choice:
 
@@ -605,6 +957,13 @@ on machines *without* a GPU, that reservation lives in a small opt-in override f
 editing. (**Apple Silicon can't do this at all** — a Linux container can't reach Metal; on a Mac, use
 option 2 or 3.)
 
+> **◆ Decision —** *The NVIDIA GPU reservation lives in an opt-in override file, not the default
+> compose.* `docker-compose.gpu.yml` adds the reservation only when you pass an extra `-f`; the base
+> `docker-compose.yml` stays GPU-free.
+>
+> **Trade-off —** GPU users type one more flag, so that plain `docker compose up` keeps working
+> unchanged on the majority of machines that have no GPU.
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 open http://localhost:8501
@@ -618,19 +977,6 @@ open http://localhost:8501
 ⚠️ **Untested:** the dev machine is Apple Silicon with no NVIDIA GPU, so I couldn't verify this path. The
 override is standard Compose GPU syntax and merges cleanly (`docker compose … config` checks out), but
 treat the end-to-end run as unproven until you try it on real NVIDIA hardware.
-
-### Using the UI
-
-There's a tab per layer, building up to the **Agent** tab, which is the actual product:
-
-- **Chat** — talk to the raw LLM, no agent (the starting point everything was built on).
-- **Corpus** — browse the indexed chunks with their Article / Recital / Section labels and metadata.
-- **RAG** — run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) →
-  generate, with citations and the distances of what it retrieved.
-- **Calculator** — flight inputs in, the full breakdown out (distance → band → threshold → reduction →
-  amount).
-- **Agent** — the whole graph: a live, node-by-node trace, the final grounded answer, citations, and the
-  disclaimer. There's a live graph diagram and a set of example queries to try.
 
 ### Managing
 
@@ -648,4 +994,18 @@ docker compose stop                       # stop containers
 docker compose down -v                    # stop + delete containers + delete network + delete volumes
 docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
 ```
+
+### Streamlit UI
+
+There's a tab per layer, building up to the **Agent** tab — the actual product. The interactive tabs
+(RAG, Calculator, Agent) each ship a dropdown of ready-made examples, so you can exercise the system
+without having to invent inputs.
+
+| Tab | What it does | Examples |
+|---|---|---|
+| **Chat** | Talk to the raw LLM, no agent — the starting point everything was built on. | free-form |
+| **Corpus** | Browse the indexed chunks with their Article / Recital / Section labels and metadata. | document picker |
+| **RAG** | Run a query through the corrective-RAG subgraph and watch retrieve → grade → (rewrite) → generate, with citations and the distances of what it retrieved. | ✅ dropdown |
+| **Calculator** | Flight inputs in, the full breakdown out (distance → band → threshold → reduction → amount). | ✅ dropdown |
+| **Agent** | The whole graph: a live, node-by-node trace, the final grounded answer, citations, and the disclaimer — plus a live graph diagram. | ✅ dropdown |
 
