@@ -595,8 +595,9 @@ into `AgentState` — the boundary mapping that keeps this subgraph independentl
 
 The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s.
 
-**`retrieve_passenger_rights(query: str, top_k: int = config.TOP_K) -> list[dict]`** — the retrieval tool,
-used inside the RAG subgraph.
+#### Retrieval tool
+
+**`retrieve_passenger_rights(query: str, top_k: int = config.TOP_K) -> list[dict]`**
 
 - `query` — a natural-language question about EU air passenger rights.
 - `top_k` — how many passages to return (defaults to `config.TOP_K`).
@@ -613,9 +614,10 @@ place.
 > **Trade-off —** the model can't lean on its own memory, so an unsupported question gets an honest
 > "the law doesn't cover this" instead of a fluent guess.
 
+#### Non-retrieval tool
+
 **`calculate_compensation(origin_iata: str, dest_iata: str, delay_hours: float, disruption_type: str =
-"delay", rerouting_offered: bool = False) -> dict`** — the non-retrieval tool, and the reason the numbers
-are trustworthy.
+"delay", rerouting_offered: bool = False) -> dict`**
 
 - `origin_iata` / `dest_iata` — IATA codes of the departure and final-destination airports (e.g. `"BUD"`,
   `"LHR"`).
