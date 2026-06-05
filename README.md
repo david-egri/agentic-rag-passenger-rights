@@ -308,7 +308,7 @@ What it's built with, where the code lives, and how the graph actually runs — 
 > LLM and the embedding model locally behind one OpenAI-style interface — a single dependency to pull,
 > run, and point `OLLAMA_URL` at, with no torch/CUDA stack to install and manage.
 >
-> **Trade-off —** capped at models that fit modest local hardware (hence ~18 s/query), bought as zero
+> **Trade-off —** capped at models that fit modest local hardware, bought as zero
 > cost, full privacy, and a reproducible offline stack — and the `LLM_BACKEND` seam keeps a swap cheap.
 
 > **◆ Decision —** *ChromaDB as the vector store.* An embedded, file-persisted store (`data/chroma/`)
@@ -818,8 +818,20 @@ pytest tests/test_calculator.py           # the deterministic calculator's unit 
 | Citation present | **7/7 (100%)** |
 | Citation correct | 6/7 (86%) |
 
-In plain terms: **the money is always right, and so is the grounding.** Every amount and every
-eligibility call was correct, and every rights answer came with a real citation — nothing invented.
+**Why the rows aren't all out of 15.** Each dimension is scored only on the questions that pin a
+target for it, and the two known-fails above are tallied separately rather than folded into these
+counts:
+
+- **Routing** applies to every question — the 14 is the 15 minus the one known-fail routing case,
+  which is reported on its own.
+- **Eligibility** and **Amount** apply only to the questions that carry a compensation figure (the
+  calculator and mixed cases), again minus the one known-fail counted separately — 8 each.
+- **Citation present / correct** applies only to the 7 rights and mixed questions that must cite the
+  law; calculator-only and off-topic questions carry nothing to cite.
+
+In plain terms: **the money is always right, and the grounding nearly always is.** Every amount and every
+eligibility call was correct, every rights answer came with a real citation — nothing invented — and all
+but one pointed at the right provision.
 The one soft spot is *sorting questions into the right lane*: when a question mixes a disruption with a
 word like "refund" or "how much," the small model tends to read it as a money question. The saving grace
 is that it barely matters for the answer — the money and mixed lanes both run the eligibility branch, so
@@ -832,7 +844,7 @@ queued for a later review phase.
 - **One query takes ~18 s** on this hardware (mean 17.8 s, p95 25.7 s). The fastest is the off-topic
   path at 2.5 s — it skips the model entirely.
 - **All of that time is the model thinking.** The LLM nodes are 100% of the work; the calculator, the
-  vector search, the routing and the answer-assembly add up to basically nothing (0.0%). The system is
+  vector search, the routing and the answer-assembly add up to basically nothing. The system is
   slow *only* because of the local model, not because of anything in our code.
 - **The single most expensive step is the RAG node (~69%)** — reading the law and writing the grounded
   answer — followed by intake (~24%). The only lever that moves latency is the number and cost of LLM
