@@ -246,40 +246,43 @@ Three caveats about what this corpus — and the rules it encodes — does and d
 
 ---
 
-## Architecture
+## Overview of the system architecture and justification of design decisions
 
-What it's built with, where the code lives, and how the graph actually runs.
+What it's built with, where the code lives, and how the graph actually runs — section by section:
+
+- **Tech stack** — the packages it's built from
+- **Project structure** — where everything lives in the repo
+- **How it works** — the system as a directed workflow, not a free-running agent
+- **The main graph** — the seven nodes and how a query routes through them
+- **The RAG subgraph** — the modular retrieval graph the main graph calls
+- **The two tools** — retrieval plus the deterministic calculator
+- **Model choices** — the local models and the hardware that constrained them
 
 ### Tech stack
-
-Each package does one job:
 
 | Package | Role |
 |---|---|
 | **LangGraph** | orchestration — the main graph and the compiled RAG subgraph |
-| **Ollama** | runs the LLM and the embedding model locally (no paid API, nothing leaves the machine) |
-| **ChromaDB** | vector store for the embedded corpus (persisted at `data/chroma/`) |
-| **Streamlit** | the UI — one tab per layer, building up to the Agent tab |
-| **Docker / compose** | packages the app and Ollama together for a one-command run |
+| **Ollama** | inference — runs the LLM and the embedding model locally |
+| **ChromaDB** | retrieval — the vector store for the embedded corpus |
+| **Streamlit** | UI — one tab per layer, building up to the Agent tab |
+| **Docker** | packaging — bundles the app and Ollama for a one-command run |
 
-Stdlib `venv` for isolation, dependencies pinned in `requirements.txt`, Python 3.14 (Docker base
-`python:3.14-slim`, matching local). Determinism where the stack allows it — `temperature=0` and fixed
-seeds where the backend supports them — so runs are reproducible. Knobs live in `config.py` with env
-overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`, `REWRITE_MAX_RETRIES`, …), and the LLM sits behind a pluggable
-`LLM_BACKEND` seam (`src/llm.py`) so a different backend — or a stub for testing — is a config change,
-not a rewrite. The two local models it runs (and *why* those two) are covered under
-[Model choices](#model-choices) below.
-
-> **◆ Decision —** *Everything runs locally via Ollama — no paid APIs, nothing leaves the machine.*
-> Both generation and embeddings are served by a local Ollama runtime, behind a pluggable
-> `LLM_BACKEND` seam (`src/llm.py`).
+> **◆ Decision —** *Ollama as the local model runtime.* With paid APIs ruled out, Ollama serves both the
+> LLM and the embedding model locally behind one OpenAI-style interface — a single dependency to pull,
+> run, and point `OLLAMA_URL` at, with no torch/CUDA stack to install and manage.
 >
 > **Trade-off —** capped at models that fit modest local hardware (hence ~18 s/query), bought as zero
-> cost, full privacy, and a reproducible offline stack.
+> cost, full privacy, and a reproducible offline stack — and the `LLM_BACKEND` seam keeps a swap cheap.
+
+> **◆ Decision —** *ChromaDB as the vector store.* An embedded, file-persisted store (`data/chroma/`)
+> that needs no separate server or container — `pip install`, point it at a path, done — which fits a
+> small, single-machine corpus and keeps the one-command run intact.
+>
+> **Trade-off —** not built for the huge-scale or multi-node search a dedicated vector DB targets, but at
+> this corpus size that ceiling is irrelevant, and the zero-ops simplicity is worth more.
 
 ### Project structure
-
-Here's where everything lives in the repo:
 
 ```
 config.py              # every knob (env-overridable): MODEL, OLLAMA_URL, TOP_K, paths, …
@@ -303,6 +306,11 @@ notes/                 # design proposal, decisions, eval results, review findin
 
 Ingestion (`src/ingest.py`) is the generic, structure-aware drop-in loader detailed in
 [Corpus & sources](#corpus--sources) above.
+
+Built for reproducibility: stdlib `venv`, pinned `requirements.txt`, and Python 3.14 (matching the
+`python:3.14-slim` Docker base), with `temperature=0` and fixed seeds where the backend supports them.
+Every knob lives in `config.py` with env overrides (`OLLAMA_URL`, `MODEL`, `TOP_K`,
+`REWRITE_MAX_RETRIES`, …).
 
 ### How it works
 
