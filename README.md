@@ -59,7 +59,7 @@ all want the same thing:
 - *"My Budapest (BUD) → London (LHR) flight was delayed 4 hours. How much compensation am I owed?"*
 - *"My Madrid → New York flight was cancelled by a snowstorm — what am I owed?"*
 - *"Am I covered flying from New York to Paris on a US airline?"*
-- *"Can I bring my dog in the cabin?"* — and the system has to know this one **isn't** its job.
+- *"Can I bring my dog in the cabin?"*
 
 Step back from these examples and a general insight emerges: this need is a poor fit for a plain chatbot,
 for four reasons:
@@ -567,7 +567,7 @@ into `AgentState` — the boundary mapping that keeps this subgraph independentl
 
 ### Tools
 
-The brief asks for at least two tools, one of them not retrieval. Both are real LangChain `@tool`s.
+Two tools do the work, both real LangChain `@tool`s: one for retrieval, one not.
 
 #### Retrieval tool
 
