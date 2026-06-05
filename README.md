@@ -56,21 +56,18 @@ These are the kinds of real questions people actually ask — and they don't all
 - *"My flight is delayed by 5 hours — am I entitled to meals and a hotel?"*
 - *"What are my rights if I'm denied boarding because the flight was overbooked?"*
 - *"My Budapest (BUD) → London (LHR) flight was delayed 4 hours. How much compensation am I owed?"*
-- *"My Madrid → New York flight was cancelled because of a snowstorm. What are my rights, and how much will I get?"*
+- *"My Madrid → New York flight was cancelled by a snowstorm — what am I owed?"*
 - *"Am I covered flying from New York to Paris on a US airline?"*
 - *"Can I bring my dog in the cabin?"* — and the system has to know this one **isn't** its job.
 
 That need is a poor fit for a plain chatbot, for three reasons that end up shaping the whole design:
 
-- **Half the question is law, half is arithmetic.** "My Budapest–London flight was cancelled, how much
-  do I get?" needs a *grounded* legal answer (is this even compensable?) **and** an *exact* number
-  (which band, which threshold). A language model is good at the first and shaky at the second — ask a
-  small model to apply distance bands and a €400/€600 cutoff and it will occasionally just make the
-  number up. So the money has to come from real code, not the model.
-- **Looking things up has to be honest.** Answers about your rights should come from the actual
-  regulation, with a citation — not from the model's memory, which you can't audit.
-- **Some questions are out of scope.** "Can I bring my dog?" or "why are fares so high?" aren't covered
-  by this regulation. A naive chatbot answers anyway; this one should notice and decline.
+- **Grounded in the law.** Answers about your rights come from the actual regulation, with a citation —
+  not the model's memory, which you can't audit.
+- **Exact by construction.** The compensation amount is arithmetic, and a small model will sometimes
+  invent it, so it comes from real code rather than the model.
+- **Knows its lane.** Many questions fall outside this regulation; the system should recognise those and
+  decline rather than guess.
 
 So the model needs help: retrieval to stay grounded, a calculator to get the number right, and some
 structure to keep it in its lane. That combination — an LLM given tools and retrieval — is the core of
