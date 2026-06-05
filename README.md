@@ -141,17 +141,17 @@ piece of the design:
 
 ---
 
-## Corpus & sources
+## Description of the data sources and corpus processing
 
 Everything here answers questions about **Reg. 261/2004**, so the corpus is built *around the regulation
-as the core*, with a few supporting documents that make that core usable. There are two distinct bodies of
+as the core*, with a few supporting documents that make that core more usable. There are two distinct bodies of
 data, kept deliberately separate:
 
 - **RAG corpus** — retrieved and cited as law
 - **airport reference data** — used only by the calculator, which needs airport coordinates to compute
   the travel distance the compensation band depends on
 
-### The RAG corpus — what retrieval reads over
+### RAG corpus
 
 A **frozen, dated snapshot** committed under `data/corpus/` — the single source of truth. The ChromaDB
 index is a **derived artifact** (gitignored), rebuilt from the corpus by an **idempotent**
@@ -180,7 +180,7 @@ legal or colloquial language. All four are © European Union, reusable with ackn
 > **Trade-off —** a little overlap and more sources to keep frozen, bought as a grounded passage to
 > return whether a question arrives in legal or colloquial language.
 
-### The airport reference data — used by the calculator, *not* the corpus
+### Airport reference data
 
 The compensation calculator needs coordinates to compute great-circle distance, so it loads OpenFlights'
 `airports.dat` (IATA → lat/lon). This is **kept separate from the RAG corpus on purpose**: it's reference
@@ -190,7 +190,7 @@ it out of the corpus and attribute it on its own.
 
 Full per-file licensing, provenance, and fetch methods live in [`data/SOURCES.md`](data/SOURCES.md).
 
-### Getting the data in — fetching, parsing, chunking
+### Corpus processing
 
 Two things made ingestion genuinely non-trivial, and both shaped the design:
 
@@ -814,11 +814,11 @@ Same queries, same settings, host Metal GPU vs the CPU-only container: the in-co
 **~5.5× slower** end to end (mean 25 s → 140 s on the LLM-heavy routes). A bare single-prompt benchmark
 is only ~2.2× — the gap widens in practice because each query fires several model calls and the RAG step
 does a big context prefill, which is where CPU hurts most. That ~5.5× is the entire reason the host-Ollama
-paths (Quick start options 2 and 3) exist — and on a Mac they're the *only* way to get the GPU at all.
+paths (options 2 and 3 below) exist — and on a Mac they're the *only* way to get the GPU at all.
 
 ---
 
-## Quick start & usage
+## Installation and running guide
 
 The system is **two pieces**, and which combination you run is the only real choice:
 
@@ -949,7 +949,7 @@ docker compose down -v                    # stop + delete containers + delete ne
 docker compose down --rmi all -v          # stop + delete containers + delete network + delete volumes + delete images
 ```
 
-### Using the UI
+### Streamlit UI
 
 There's a tab per layer, building up to the **Agent** tab — the actual product. The interactive tabs
 (RAG, Calculator, Agent) each ship a dropdown of ready-made examples, so you can exercise the system
