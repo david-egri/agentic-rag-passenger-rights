@@ -843,8 +843,35 @@ the intake step to fill a strict schema instead of replying freely) and queued f
 
 ### Performance test
 
-- **One query takes ~18 s** on this hardware (mean 17.8 s, p95 25.7 s). The fastest is the off-topic
-  path at 2.5 s — it skips the model entirely.
+The load test cycles the 15-case eval set round-robin to N=50 queries through the real graph,
+**sequential and single-threaded** (a single local Ollama serialises generation anyway), recording
+per-node timing alongside the trace. Numbers below are `N=50, 2026-06-04, qwen2.5:3b-instruct, temperature 0`.
+
+**End-to-end latency** (throughput 0.056 q/s, ~3.4 queries/min; wall time 890.7 s for 50 queries):
+
+| Metric | mean | p50 | p90 | p95 | max | min |
+|---|---:|---:|---:|---:|---:|---:|
+| Latency (s) | **17.8** | 18.1 | 24.6 | 25.7 | 30.5 | **2.47** |
+
+The `min` of 2.47 s is the off-topic fallback path — it skips the model entirely.
+
+**Where the time goes**, per node:
+
+| node | kind | calls | total s | mean s | share |
+|---|---|---:|---:|---:|---:|
+| `rag` | LLM | 44 | 614.4 | 13.96 | **69.0%** |
+| `intake` | LLM | 50 | 213.3 | 4.27 | **24.0%** |
+| `eligibility` | LLM\* | 40 | 33.6 | 0.84 | 3.8% |
+| `planner` | LLM | 11 | 29.1 | 2.65 | 3.3% |
+| `calculator` | — | 40 | 0.16 | 0.004 | 0.0% |
+| `router` | — | 50 | 0.04 | 0.001 | 0.0% |
+| `synthesize` | — | 44 | 0.02 | 0.000 | 0.0% |
+| `fallback` | — | 6 | 0.00 | 0.000 | 0.0% |
+
+\* `eligibility` is an LLM call **only when a cause is stated**; the no-cause path is deterministic.
+
+Reading those two tables:
+
 - **All of that time is the model thinking.** The LLM nodes are 100% of the work; the calculator, the
   vector search, the routing and the answer-assembly add up to basically nothing. The system is
   slow *only* because of the local model, not because of anything in our code.
@@ -852,8 +879,14 @@ the intake step to fill a strict schema instead of replying freely) and queued f
   answer — followed by intake (~24%). The only lever that moves latency is the number and cost of LLM
   calls, which is exactly why several steps were built to *avoid* a model call (deterministic synthesize,
   a no-model eligibility shortcut, the instant off-topic bail-out). The load test confirms each of those
-  saves real time. The next lever — skip the heavy RAG step for pure money questions, which don't need
-  it — is identified and deferred to the review phase.
+  saves real time.
+
+**A potential improvement** is to skip the RAG subgraph for pure `compensation_calc` questions. Since
+`rag` is 69% of the cost and a money question's amount is deterministic (the calculator) with its
+eligibility usually on the no-cause deterministic path, the RAG call there only produces optional
+citations. Making the RAG branch conditional — skip it for `compensation_calc`, keep it for `rights_info`
+/ `mixed` — would drop one ~14 s subgraph call from every calc query, taking them from ~18 s to ~4–5 s.
+It's a graph-wiring change, touching the router branch and the citation expectations.
 
 ### CPU vs GPU
 
