@@ -25,6 +25,39 @@ machine, no paid APIs, nothing leaving the box, and up with a single command.
 
 ---
 
+## Table of contents
+
+- [Description of the problem and the objective](#description-of-the-problem-and-the-objective)
+- [Description of the data sources and corpus processing](#description-of-the-data-sources-and-corpus-processing)
+  - [RAG corpus](#rag-corpus)
+  - [Airport data](#airport-data)
+  - [Corpus processing](#corpus-processing)
+  - [Caveats](#caveats)
+- [Overview of the system architecture and justification of design decisions](#overview-of-the-system-architecture-and-justification-of-design-decisions)
+  - [Tech stack](#tech-stack)
+  - [Project structure](#project-structure)
+  - [System design](#system-design)
+  - [Main graph](#main-graph)
+  - [RAG subgraph](#rag-subgraph)
+  - [Tools](#tools)
+  - [Models](#models)
+- [Summary of the functional evaluation and performance test results](#summary-of-the-functional-evaluation-and-performance-test-results)
+  - [Evaluation set](#evaluation-set)
+  - [Functional evaluation](#functional-evaluation)
+  - [Performance test](#performance-test)
+  - [CPU vs GPU](#cpu-vs-gpu)
+- [Installation and running guide](#installation-and-running-guide)
+  - [All-in-Docker, CPU only](#1--all-in-docker-cpu-only-----tested)
+  - [Fully local, no Docker](#2--fully-local-no-docker-----tested)
+  - [Hybrid: app in Docker, Ollama on the host](#3--hybrid-app-in-docker-ollama-on-the-host-----tested-on-mac-only)
+  - [All-in-Docker with NVIDIA GPU](#4--all-in-docker-with-nvidia-gpu-----not-tested)
+  - [Managing](#managing)
+  - [Cleaning up](#cleaning-up)
+  - [Streamlit UI](#streamlit-ui)
+- [Licensing](#licensing)
+
+---
+
 ## Description of the problem and the objective
 
 With that need established, the scope is narrow and deliberate. The system covers exactly one law —
