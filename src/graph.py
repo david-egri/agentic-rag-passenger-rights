@@ -1,30 +1,47 @@
-"""The main agent graph — typed state + the directed agent that ties retrieval, eligibility,
-and the deterministic calculator together.
+"""The main agent graph (v2) — typed state + a capability-routed agent that ties retrieval,
+eligibility, and the deterministic calculator together.
 
 Topology:
 
-    START → classify → extract ─┬─ out_of_scope ──→ fallback → END
-                                ├─ rights_info ───→ rag ──────────────→ synthesize → END
-                                └─ compensation_calc / mixed → [rag, calculator]  (fan-out)
+    START → classify ─┬─ ¬in_scope ─────→ fallback → END
+                      ├─ asks_rights ───→ rights ───────────────→ synthesize → END
+                      └─ asks_amount ───→ extract ─┬─ calculator ─┤
+                                                   └─ eligibility ┘
 
-        rag → (rights_info? → synthesize : → eligibility)
-        eligibility → synthesize        calculator → synthesize        (fan-in)
+Routing is on the three intent SIGNALS (in_scope / asks_rights / asks_amount), not the derived
+`query_type` label. `query_type` is still computed and stored, but only as a human-readable tag
+for the trace and the eval — it no longer drives control flow. A message can be both asks_rights
+and asks_amount, so `classify` fans out to `rights` and `extract` together (the old
+`compensation_calc` vs `mixed` split is gone — it only ever differed in whether the rights answer
+was shown, which falls out naturally here).
 
-`classify` detects three boolean intent signals (in_scope / asks_rights / asks_amount) and the
-query-type lane is derived from them in code (`_derive_query_type`) — more robust than asking the
-3B model for the label directly. `extract` pulls the flight entities. The corrective-RAG
-**subgraph** is reused in both the rights_info path and the eligibility branch via a single shared
-`rag` node — it *invokes* the compiled `rag_graph`, it does not reimplement retrieval.
+`extract` runs only on the amount path: `flight_details` is consumed solely by `calculator` and
+`eligibility`, so rights-only and out-of-scope questions no longer pay for an unused extraction
+LLM call.
 
-compensation_calc and mixed are a real **fan-out → fan-in**: the eligibility branch
-(rag → eligibility) and the calculator branch run as independent siblings and converge at
-`synthesize`. The only coupling is the gate applied there: `final = eligible ? candidate : 0` —
-the calculator never waits on eligibility. `synthesize` is a **deferred** node so it waits for
-*both* branches even though they are different lengths (calculator is one hop, eligibility two).
+The old single `rag` node is split into its two distinct jobs:
 
-Every node appends a step to `state["trace"]` (append-only reducer) so the Streamlit Agent tab
-can render the run node-by-node. All model access goes through the `get_llm()` seam
-(CLAUDE.md constraint #1) — nodes use `get_llm().with_structured_output(...)` for typed output.
+  - `rights`      — produces the user-facing cited answer. Query = the whole user question. Runs
+                    iff asks_rights. Uses the full corrective-RAG subgraph.
+  - `eligibility` — owns its OWN grounding. Query = a cause-specific question aimed at the
+                    Art. 5(3) extraordinary-circumstances doctrine, built from the extracted
+                    `reason`. Retrieves only when a cause is present (no cause → deterministic
+                    "owed in principle", no retrieval). Different trigger AND different query —
+                    feeding both the raw user input would mis-ground the eligibility judgment.
+
+The amount path is a real **fan-out → fan-in**: `calculator` and `eligibility` run as independent
+siblings after `extract` and converge at `synthesize`. The eligibility gate (`final = eligible ?
+candidate : 0`) is applied at `synthesize` — the calculator stays eligibility-agnostic. The
+Art. 5 citation that justifies a gated-to-€0 answer now comes from eligibility's own retrieval, so
+pure-amount questions that gate to €0 still carry a citation even when no rights answer was
+produced. `synthesize` is **deferred** so it waits for every active branch despite their different
+lengths.
+
+Every node appends a step to `state["trace"]` (append-only reducer) so the Streamlit Agent tab can
+render the run node-by-node. All model access goes through the `get_llm()` seam (CLAUDE.md
+constraint #1) — nodes use `get_llm().with_structured_output(...)` for typed output; the LLM nodes
+also carry a graph-level retry policy so the try/except blocks catch only genuine schema misses,
+not transient flakiness.
 """
 
 from __future__ import annotations
@@ -34,17 +51,22 @@ from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import RetryPolicy
 
 from src.calculator import DISRUPTION_TYPES
 from src.llm import get_llm
-from src.rag import rag_graph
-from src.tools import calculate_compensation
+from src.rag import citations_from_docs, passages_block, rag_graph
+from src.tools import calculate_compensation, retrieve_passenger_rights
 
 SYSTEM_PROMPT = (
     "You are an assistant for EU air passenger rights under Regulation (EC) No 261/2004, which "
     "covers ONLY flight delays, cancellations, denied boarding, and the compensation/care they "
     "trigger. Follow the task instructions and return only the requested structured data."
 )
+
+# One retry policy reused for the LLM nodes. The calculator is deterministic code, so it gets
+# none. (langgraph >= the vintage that provides defer=True also accepts retry_policy on add_node.)
+LLM_RETRY = RetryPolicy(max_attempts=2)
 
 
 # ------------------------------------------------------------------------------- state
@@ -58,7 +80,7 @@ class IntentSignals(TypedDict):       # what classify's LLM call emits
     asks_amount: bool
 
 
-class ClassifyResult(IntentSignals):  # the signals plus the query_type derived from them
+class ClassifyResult(IntentSignals):  # the signals (drive routing) plus the derived label
     query_type: QueryType
 
 
@@ -78,30 +100,26 @@ class EligibilityResult(TypedDict):
 
 class AgentState(TypedDict, total=False):
     user_query: str                       # the raw question from the user
-    classification: ClassifyResult        # classify's verdict; the edge dispatches on query_type
+    classification: ClassifyResult        # signals (drive routing) + query_type label
     flight_details: FlightDetails         # entities extracted by the extract node
-    retrieved_docs: list[dict]            # RAG chunks (text + metadata + distance) — feeds eligibility
+    # rights pipeline — the corrective-RAG subgraph
+    rag_docs: list[dict]                  # chunks retrieved behind the rights answer
     rag_answer: str                       # grounded rights answer from the RAG subgraph
-    rag_citations: list[dict]             # [{source, article, url}] backing rag_answer
-    eligibility: EligibilityResult        # the eligibility verdict {eligible, rationale}
+    # eligibility pipeline — cause-specific grounding
+    eligibility: EligibilityResult        # the verdict {eligible, rationale}
+    eligibility_docs: list[dict]          # chunks retrieved behind the verdict (cause-specific)
+    # deterministic calculator
     calc_result: dict                     # calculate_compensation output (distance_km, band, amounts, …)
-    final_answer: str                     # the composed answer shown to the user
+    # composed output
+    final_answer: str                     # the answer shown to the user
+    citations: list[dict]                 # evidence behind final_answer, merged from the docs at synthesize
     trace: Annotated[list, operator.add]  # per-node log for the Agent tab (append-only)
 
 
 # ----------------------------------------------------------------------------- helpers
 
-def _docs_context(docs: list[dict], n: int = 4, max_chars: int = 600) -> str:
-    """Number the top retrieved chunks (truncated) as grounding context for a prompt."""
-    lines = []
-    for i, d in enumerate(docs[:n], 1):
-        m = d["metadata"]
-        lines.append(f"[{i}] ({m['source']} · {m['article']})\n{d['text'][:max_chars]}")
-    return "\n\n".join(lines) if lines else "(no passages retrieved)"
-
-
 def _derive_query_type(signals: dict) -> QueryType:
-    """Map the classifier's boolean signals to a query-type lane."""
+    """Map the boolean signals to a label. Reporting/eval only — NOT used for routing."""
     if not signals.get("in_scope", True):
         return "out_of_scope"
     asks_rights = signals.get("asks_rights", False)
@@ -120,6 +138,7 @@ def classify(state: AgentState) -> dict:
 
     Asking the 3B model for three independent booleans (in_scope / asks_rights / asks_amount) and
     deriving `query_type` from them is more robust than asking it for the four-way label directly.
+    The booleans drive routing; the derived label is reporting/eval only.
     """
     query = state["user_query"]
     prompt = f"""
@@ -166,7 +185,11 @@ def classify(state: AgentState) -> dict:
 
 
 def extract(state: AgentState) -> dict:
-    """Extract structured flight details from the question (null for anything not stated)."""
+    """Extract structured flight details from the question (null for anything not stated).
+
+    Only runs on the amount path — `flight_details` is consumed solely by `calculator` and
+    `eligibility`.
+    """
     query = state["user_query"]
     prompt = f"""
         User message: "{query}"
@@ -209,25 +232,25 @@ def extract(state: AgentState) -> dict:
     return {"flight_details": details, "trace": [{"node": "extract", "flight_details": details}]}
 
 
-def rag(state: AgentState) -> dict:
-    """Invoke the compiled corrective-RAG **subgraph** and map its result into AgentState.
+def rights(state: AgentState) -> dict:
+    """Rights pipeline: a grounded, cited answer to the user's actual question.
 
-    This is the subgraph attached as a node (CLAUDE.md guardrail #3): it calls `rag_graph.invoke`,
-    it does not reimplement retrieval. Schemas differ (RAGState vs AgentState), so the mapping
-    happens here at the boundary. The retrieved docs feed the eligibility node (in the eligibility
-    branch); the answer/citations feed synthesize.
+    Query = the whole user question (it IS the retrieval target). Runs iff asks_rights. Invokes the
+    compiled corrective-RAG **subgraph** (CLAUDE.md guardrail #3 — it does not reimplement
+    retrieval); the inner grade→rewrite loop refines colloquial phrasing. Schemas differ (RAGState
+    vs AgentState), so the mapping happens here at the boundary.
     """
-    out = rag_graph.invoke({"question": state["user_query"], "query": state["user_query"], "rewrites": 0})
+    q = state["user_query"]
+    out = rag_graph.invoke({"question": q, "query": q, "rewrites": 0})
     return {
-        "retrieved_docs": out.get("documents", []),
+        "rag_docs": out.get("documents", []),
         "rag_answer": out.get("answer", ""),
-        "rag_citations": out.get("citations", []),
         "trace": [
             {
-                "node": "rag",
+                "node": "rights",
                 "n_docs": len(out.get("documents", [])),
                 "rewrites": out.get("rewrites", 0),
-                "n_citations": len(out.get("citations", [])),
+                "n_citations": len(out.get("citations", [])),  # subgraph's own dedup; final set built at synthesize
                 "rag_steps": out.get("steps", []),  # the inner corrective loop, for drill-down
             }
         ],
@@ -235,29 +258,49 @@ def rag(state: AgentState) -> dict:
 
 
 def eligibility(state: AgentState) -> dict:
-    """Autonomous decision: is the disruption compensable, or an extraordinary circumstance?
+    """Decide whether the disruption qualifies, grounding on a CAUSE-SPECIFIC retrieval.
 
-    Combines the extracted `reason` with the retrieved rules (the rag node runs first in this
-    branch) and the well-known EU261 carve-outs. Eligibility-agnostic of the amount — the gate is
-    applied at synthesize.
+    No cause stated → deterministic "owed in principle" (Art. 5(3) default), no retrieval.
+    Cause stated    → retrieve passages about the Art. 5(3) extraordinary-circumstances test for
+                      THIS cause, then judge and (if gating to €0) carry the citation. Reframed
+                      around "within the carrier's control" — asking the small model directly about
+                      "extraordinary" invites treating every strike as extraordinary.
+
+    Eligibility-agnostic of the amount — the gate is applied at synthesize.
     """
     details = state.get("flight_details") or {}
     reason = (details.get("reason") or "").strip()
 
-    # No cause stated → default to compensable. Extraordinary circumstances are an exception
-    # the *carrier* must prove (Art. 5(3)); absent a stated extraordinary cause, the default
-    # is that compensation is in principle owed. Deterministic — and saves an LLM call.
+    # No cause stated → default to compensable. Extraordinary circumstances are an exception the
+    # *carrier* must prove (Art. 5(3)); absent a stated extraordinary cause, the default is that
+    # compensation is in principle owed. Deterministic — no LLM, no retrieval.
     if not reason:
         result = {
             "eligible": True,
             "rationale": "No extraordinary cause was stated, so compensation is in principle owed "
             "(the airline would have to prove an extraordinary circumstance to be exempt).",
         }
-        return {"eligibility": result, "trace": [{"node": "eligibility", **result}]}
+        return {
+            "eligibility": result,
+            "eligibility_docs": [],
+            "trace": [{"node": "eligibility", "retrieved": False, **result}],
+        }
 
-    context = _docs_context(state.get("retrieved_docs", []))
-    # Reframed around "within the carrier's control" — asking the small model directly about
-    # "extraordinary" invites the error of treating every strike as extraordinary.
+    # Cause stated → ground the judgment on a query aimed at the doctrine, not the user's broad
+    # question. This is what keeps the retrieved context on-topic for the test. Eligibility needs
+    # passages + a citation, NOT a generated answer, so it goes straight to the
+    # `retrieve_passenger_rights` tool — a plain top-k vector search — instead of the full
+    # corrective-RAG subgraph, skipping its grade/rewrite/generate LLM calls (generate is the
+    # latency bottleneck). Citations use the same helper the RAG `generate` node does, so the two
+    # citation sets share a shape and `synthesize` can dedup-merge them.
+    elig_query = (
+        f"Under Regulation 261/2004 Article 5(3), is '{reason}' an extraordinary circumstance "
+        f"beyond the air carrier's control that exempts it from paying compensation, or is it "
+        f"within the carrier's control?"
+    )
+    docs = retrieve_passenger_rights.invoke({"query": elig_query})
+    context = passages_block(docs, max_chars=600)
+
     prompt = f"""
         Cause of the flight disruption: "{reason}"
 
@@ -301,7 +344,11 @@ def eligibility(state: AgentState) -> dict:
         eligible = True  # default to owed-in-principle; synthesize still gates on the calc
     rationale = parsed.get("rationale") or "Eligibility depends on the verified cause of the disruption."
     result = {"eligible": eligible, "rationale": str(rationale)}
-    return {"eligibility": result, "trace": [{"node": "eligibility", **result}]}
+    return {
+        "eligibility": result,
+        "eligibility_docs": docs,  # evidence behind the verdict; feeds the merged citations at synthesize
+        "trace": [{"node": "eligibility", "retrieved": True, "n_docs": len(docs), **result}],
+    }
 
 
 def calculator(state: AgentState) -> dict:
@@ -346,8 +393,10 @@ def synthesize(state: AgentState) -> dict:
 
     Deterministic assembly from already-grounded parts (the RAG answer is itself grounded + cited;
     the calc_result is deterministic) — no extra LLM call, so nothing new can be hallucinated here
-    and the numbers/citations stay intact. The gate is the only coupling between the two branches:
-    `final = eligible ? candidate : 0`.
+    and the numbers/citations stay intact. `rag_answer` is only present when the rights node ran
+    (asks_rights), so it never leaks into a pure-amount reply. The gate is the only coupling between
+    the branches: `final = eligible ? candidate : 0`. The answer's `citations` are built here once,
+    deduped over the docs both pipelines grounded on (`rag_docs` + `eligibility_docs`).
     """
     parts: list[str] = []
     rag_answer = state.get("rag_answer", "").strip()
@@ -390,9 +439,16 @@ def synthesize(state: AgentState) -> dict:
                 parts.append(f"_Eligibility: {elig['rationale']}_")
 
     final_answer = "\n\n".join(parts) if parts else "I couldn't produce a grounded answer for that."
+
+    # Build the answer's evidence once, from the docs both pipelines grounded on. citations_from_docs
+    # dedups by (source, article) across both, so a gated-to-€0 pure-amount query still carries its
+    # eligibility citation even though no rights answer was produced.
+    citations = citations_from_docs((state.get("rag_docs") or []) + (state.get("eligibility_docs") or []))
+
     return {
         "final_answer": final_answer,
-        "trace": [{"node": "synthesize", "final_eur": final_eur, "gated": gated}],
+        "citations": citations,
+        "trace": [{"node": "synthesize", "final_eur": final_eur, "gated": gated, "n_citations": len(citations)}],
     }
 
 
@@ -410,39 +466,46 @@ def fallback(state: AgentState) -> dict:
 
 # ----------------------------------------------------------------------------- wiring
 
-def _route_after_extract(state: AgentState):
-    """The dispatch after extract. Returns node name(s); a list fans out."""
-    qt = state["classification"]["query_type"]
-    if qt == "out_of_scope":
+def _route_from_classify(state: AgentState):
+    """Capability routing: fan out to the pipelines the signals call for.
+
+    Returns a node name or a list of node names (a list fans out in parallel). The query_type
+    label is NOT consulted here — only the raw booleans.
+    """
+    c = state["classification"]
+    if not c.get("in_scope", True):
         return "fallback"
-    if qt == "rights_info":
-        return "rag"
-    return ["rag", "calculator"]  # compensation_calc / mixed → fan-out
-
-
-def _route_after_rag(state: AgentState) -> str:
-    """rights_info answers straight from RAG; the comp/mixed paths feed eligibility."""
-    return "synthesize" if state["classification"]["query_type"] == "rights_info" else "eligibility"
+    targets = []
+    if c.get("asks_rights"):
+        targets.append("rights")     # rights pipeline → cited answer
+    if c.get("asks_amount"):
+        targets.append("extract")    # amount pipeline → extract → calculator + eligibility (parallel)
+    # In scope but no clear ask (small-model miss) → default to the rights pipeline.
+    return targets or ["rights"]
 
 
 def build_agent_graph():
     """Build and compile the main agent graph."""
     g = StateGraph(AgentState)
-    g.add_node("classify", classify)
-    g.add_node("extract", extract)
-    g.add_node("rag", rag)
-    g.add_node("eligibility", eligibility)
-    g.add_node("calculator", calculator)
-    # Deferred so the fan-in waits for BOTH branches despite their different lengths.
+    g.add_node("classify", classify, retry_policy=LLM_RETRY)
+    g.add_node("extract", extract, retry_policy=LLM_RETRY)
+    g.add_node("rights", rights, retry_policy=LLM_RETRY)
+    g.add_node("eligibility", eligibility, retry_policy=LLM_RETRY)
+    g.add_node("calculator", calculator)  # deterministic code — no retry
+    # Deferred so the fan-in waits for every active branch despite their different lengths.
     g.add_node("synthesize", synthesize, defer=True)
     g.add_node("fallback", fallback)
 
     g.add_edge(START, "classify")
-    g.add_edge("classify", "extract")
-    g.add_conditional_edges("extract", _route_after_extract, ["fallback", "rag", "calculator"])
-    g.add_conditional_edges("rag", _route_after_rag, ["synthesize", "eligibility"])
-    g.add_edge("eligibility", "synthesize")
+    # Capability fan-out: fallback (¬in_scope) | rights (asks_rights) | extract (asks_amount).
+    g.add_conditional_edges("classify", _route_from_classify, ["fallback", "rights", "extract"])
+    # Amount path: extract feeds the calculator and the eligibility gate in parallel.
+    g.add_edge("extract", "calculator")
+    g.add_edge("extract", "eligibility")
+    # All producing branches converge once at the deferred synthesize.
+    g.add_edge("rights", "synthesize")
     g.add_edge("calculator", "synthesize")
+    g.add_edge("eligibility", "synthesize")
     g.add_edge("synthesize", END)
     g.add_edge("fallback", END)
     return g.compile()
