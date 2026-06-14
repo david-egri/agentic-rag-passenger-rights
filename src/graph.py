@@ -203,8 +203,13 @@ def extract(state: AgentState) -> dict:
              delay is stated.
            - disruption_type: one of {DISRUPTION_TYPES} — "delay" for a late flight, "cancellation"
              for a cancelled one, "denied_boarding" for being bumped / overbooked.
-           - reason: the cause of disruption ONLY if it is explicitly stated (e.g. "weather", "airline
-             staff strike"); null if no cause is given. Do not infer or invent a cause.
+           - reason: the cause of disruption, ONLY if it is explicitly stated (null if no cause is
+             given; do not infer or invent one). Capture ANY stated cause, AS STATED and SPECIFIC —
+             e.g. "bad weather" / "snowstorm", "air-traffic-control restrictions", "a technical
+             fault", "security alert". For a strike, ALSO preserve WHO is striking: the airline's OWN
+             staff/crew vs a THIRD PARTY (airport staff, ATC) — keep "the airline's own cabin crew
+             strike" or "airport staff strike", not a bare "strike"; the eligibility decision turns
+             on that distinction.
            - rerouting_offered: true if the airline offered an alternative flight / re-routing, false
              if it did not, null if not mentioned.
 
