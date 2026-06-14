@@ -33,11 +33,11 @@ from src.graph import agent_graph
 EVAL_SET = Path(__file__).with_name("eval_set.yaml")
 DEFAULT_JSON = Path(__file__).with_name("loadtest_last.json")
 
-# Which main-graph nodes call the LLM (for the bottleneck split). `rag` wraps the whole
+# Which main-graph nodes call the LLM (for the bottleneck split). `rights` wraps the whole
 # corrective-RAG subgraph (retrieve + LLM grade + LLM generate, maybe a rewrite loop), so its
-# time is LLM-dominated. `eligibility` is LLM only when a cause is stated (no-cause is a
-# deterministic shortcut). calculator/synthesize/fallback are LLM-free.
-LLM_NODES = {"classify", "extract", "rag", "eligibility"}
+# time is LLM-dominated. `eligibility` is LLM only when a cause is stated (vector retrieval + an
+# LLM judgment; no-cause is a deterministic shortcut). calculator/synthesize/fallback are LLM-free.
+LLM_NODES = {"classify", "extract", "rights", "eligibility"}
 
 
 def _load_pool() -> list[str]:
