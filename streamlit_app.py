@@ -282,15 +282,15 @@ def render_calculator_tab():
 
 
 def render_agent_tab():
-    """Agent tab — the product. Runs the full 7-node agent graph and walks the nodes:
-    intake → router → (planner) → rag/eligibility ‖ calculator → synthesize, with the
-    grounded final answer, citations, and the 'not legal advice' disclaimer."""
+    """Agent tab — the product. Runs the full agent graph and walks the nodes:
+    classify → extract → rag/eligibility ‖ calculator → synthesize, with the grounded
+    final answer, citations, and the 'not legal advice' disclaimer."""
     st.subheader("Agent")
     st.caption(
-        "The full agentic-RAG graph (`src/graph.py`): intake classifies the query, the router "
-        "dispatches, `mixed`/`compensation_calc` fan out to an eligibility branch (RAG → "
-        "eligibility) and the deterministic calculator, and synthesize gates and composes the "
-        "answer. Watch every node below."
+        "The full agentic-RAG graph (`src/graph.py`): classify detects the intent signals and "
+        "extract pulls the flight details, then `mixed`/`compensation_calc` fan out to an "
+        "eligibility branch (RAG → eligibility) and the deterministic calculator, and synthesize "
+        "gates and composes the answer. Watch every node below."
     )
 
     with st.expander("📊 Graph structure (the wiring behind the agent)", expanded=False):
@@ -322,7 +322,7 @@ def render_agent_tab():
         "My Paris to Amsterdam flight was delayed 2 hours — am I owed compensation?",                       # under the 3 h threshold → €0
         "I was denied boarding on my Vienna to London flight because it was overbooked. How much can I claim?",  # denied boarding → €250
         "My Lisbon to Paris flight was cancelled, but I was rerouted and arrived only 2 hours late. What compensation applies?",  # 50% reduction → €125
-        # mixed → planner → calculator ‖ rag→eligibility → synthesize (eligibility gate)
+        # mixed → calculator ‖ rag→eligibility → synthesize (eligibility gate)
         "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",  # own-staff strike = compensable → €250
         "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",  # weather = extraordinary → €0
         # out_of_scope → fallback (hallucination firewall)
