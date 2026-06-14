@@ -57,19 +57,24 @@ env-var overrides. Read them through `config.py` — don't hardcode knobs at cal
 
 ## Architecture
 
-**State** (`src/state.py`): a typed `AgentState` carrying `user_query`, `query_type`,
-`flight_details`, `subtasks`, `retrieved_docs`, `rag_answer`, `rag_citations`, `eligibility`,
-`calc_result`, `final_answer`, and `trace` (a per-node log surfaced in the UI).
+**State** (defined in `src/graph.py`): a typed `AgentState` carrying `user_query`,
+`classification` (`{in_scope, asks_rights, asks_amount, query_type}`), `flight_details`,
+`retrieved_docs`, `rag_answer`, `rag_citations`, `eligibility`, `calc_result`, `final_answer`,
+and `trace` (a per-node log surfaced in the UI). The state types live alongside the graph in
+`src/graph.py`.
 
 **Main graph** (`src/graph.py`) — the control flow, as explicit nodes:
 
-1. `intake` — extract flight entities + classify intent (structured output)
-2. `router` — branch on `query_type`: `rights_info` / `compensation_calc` / `mixed` / `out_of_scope`
-3. `planner` — decompose `mixed` queries into subtasks
-4. `eligibility` — decide whether the disruption is compensable (extraordinary-circumstances logic)
-5. `calculator` — invoke the deterministic compensation tool
-6. `synthesize` — merge rights answer + amount + citations + disclaimer
-7. `fallback` — out-of-scope handling (the hallucination firewall)
+1. `classify` — detect three boolean intent signals (`in_scope` / `asks_rights` / `asks_amount`)
+   via `with_structured_output`; `query_type` is derived from them in code, not asked of the LLM
+2. `extract` — pull structured flight entities (`with_structured_output`)
+3. `eligibility` — decide whether the disruption is compensable (extraordinary-circumstances logic)
+4. `calculator` — invoke the deterministic compensation tool
+5. `synthesize` — merge rights answer + amount + citations + disclaimer (deferred fan-in)
+6. `fallback` — out-of-scope handling (the hallucination firewall)
+
+Routing lives on the conditional edges, not a node: after `extract`, `out_of_scope → fallback`,
+`rights_info → rag`, and `compensation_calc` / `mixed` fan out to `[rag, calculator]`.
 
 **RAG subgraph** (`src/rag.py`): a modular, separately compiled `StateGraph` added to the main
 graph as a node. Corrective RAG —
@@ -83,8 +88,10 @@ graph as a node. Corrective RAG —
   — non-retrieval: haversine distance from OpenFlights coords → distance band → amount, then the
   3-hour threshold and 50% reduction rules
 
-**Mixed queries** run as a real fan-out → fan-in: a RAG/eligibility branch and a calculator
-branch execute as independent parallel branches and converge at `synthesize`.
+**`compensation_calc` and `mixed` queries** run as a real fan-out → fan-in: a RAG/eligibility
+branch (`rag → eligibility`) and a calculator branch execute as independent parallel branches and
+converge at the deferred `synthesize` node, where the eligibility gate (`final = eligible ?
+candidate : 0`) is applied.
 
 This is a **directed/structured agent** — the graph governs control flow rather than letting the
 model freely choose tools. That's a deliberate trade-off: predictability and testability over
