@@ -80,14 +80,15 @@
         - { source: "Reg (EC) 261/2004", article: "Art. 3" }
         - { source: "EUR-Lex Summary (261/2004)" }
   known_fail:
-    dimensions: [routing]
-    ref: SCOPE-ASYMMETRY-MISROUTE
+    dimensions: [cite_correct]
+    ref: SCOPE-ASYMMETRY-CITATION
     note: >
-      3B intake reads "New York / US airline" as off-topic and classifies out_of_scope →
-      fallback, so the asymmetric-scope question never reaches RAG. Correct answer: NOT
-      covered (non-EU→EU on a non-EU carrier). See DECISIONS spot-check-misroutes.
+      Routing now classifies this coverage question as rights_info (fixed by the classify/extract
+      refactor). The residual 3B gap is citation correctness: retrieval doesn't surface Art. 3 /
+      the EUR-Lex summary for an asymmetric-scope question, so cite_correct still misses. Correct
+      answer: NOT covered (non-EU→EU on a non-EU carrier). See DECISIONS spot-check-misroutes.
 
-# ─────────────────────────────────────── compensation_calc (5) ─────────────────────────────
+# ─────────────────────────────────────── compensation_calc (6)─────────────────────────────
 - id: delay-short-haul-250
   category: compensation_calc
   query: "My flight from Budapest (BUD) to London (LHR) was delayed 4 hours. How much compensation am I owed?"
@@ -140,7 +141,25 @@
       required: false
   # finding #6 — cancellation path (threshold_met=True independent of delay_hours).
 
-# ─────────────────────────────────────────────── mixed (3) ─────────────────────────────────
+- id: mixed-atc-restrictions
+  category: compensation_calc
+  query: >
+    My flight from Frankfurt (FRA) to London (LHR) was delayed 4 hours due to air traffic
+    control restrictions. How much compensation am I owed?
+  expect:
+    query_type: compensation_calc  # only asks "how much" → compensation_calc (no rights ask)
+    eligible: false                # ATC restrictions = extraordinary (beyond carrier control) → €0
+    amount_eur: 0                  # candidate €250 should gate to €0
+    citations:
+      required: true
+      any_of:
+        - { source: "Reg (EC) 261/2004", article: "Art. 5" }
+        - { source: "Reg (EC) 261/2004", article: "Art. 7" }
+        - { source: "Commission Guidelines (2024)" }
+  # ATC = extraordinary (CLAUDE.md gotcha): eligible=false gates candidate €250 → €0. Previously
+  # a documented 3B known-fail (ATC-NOT-EXTRAORDINARY); fixed by the classify/extract refactor.
+
+# ─────────────────────────────────────────────── mixed (2)─────────────────────────────────
 - id: mixed-own-strike
   category: mixed
   query: >
@@ -172,29 +191,6 @@
         - { source: "Reg (EC) 261/2004", article: "Art. 5" }
         - { source: "Reg (EC) 261/2004", article: "Art. 9" }
         - { source: "Commission Guidelines (2024)" }
-
-- id: mixed-atc-restrictions
-  category: mixed
-  query: >
-    My flight from Frankfurt (FRA) to London (LHR) was delayed 4 hours due to air traffic
-    control restrictions. How much compensation am I owed?
-  expect:
-    query_type: mixed
-    eligible: false                # ATC restrictions = extraordinary (beyond carrier control) → €0
-    amount_eur: 0                  # candidate €250 should gate to €0
-    citations:
-      required: true
-      any_of:
-        - { source: "Reg (EC) 261/2004", article: "Art. 5" }
-        - { source: "Reg (EC) 261/2004", article: "Art. 7" }
-        - { source: "Commission Guidelines (2024)" }
-  known_fail:
-    dimensions: [eligibility, amount]
-    ref: ATC-NOT-EXTRAORDINARY
-    note: >
-      3B eligibility node returns eligible=True for ATC restrictions → €250 instead of gating
-      to €0. ATC is an extraordinary circumstance (CLAUDE.md gotcha). The control-test prompt
-      covers weather/strikes but misses ATC. See DECISIONS spot-check-misroutes.
 
 # ──────────────────────────────────────────── out_of_scope (2) ─────────────────────────────
 - id: oos-baggage-fees

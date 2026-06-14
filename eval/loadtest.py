@@ -36,8 +36,8 @@ DEFAULT_JSON = Path(__file__).with_name("loadtest_last.json")
 # Which main-graph nodes call the LLM (for the bottleneck split). `rag` wraps the whole
 # corrective-RAG subgraph (retrieve + LLM grade + LLM generate, maybe a rewrite loop), so its
 # time is LLM-dominated. `eligibility` is LLM only when a cause is stated (no-cause is a
-# deterministic shortcut). router/calculator/synthesize/fallback are LLM-free.
-LLM_NODES = {"intake", "planner", "rag", "eligibility"}
+# deterministic shortcut). calculator/synthesize/fallback are LLM-free.
+LLM_NODES = {"classify", "extract", "rag", "eligibility"}
 
 
 def _load_pool() -> list[str]:

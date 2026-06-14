@@ -131,9 +131,9 @@ That's subtask decomposition and independent execution, again surfacing straight
 Taken together, these domain insights define the architecture that follows — each one becomes a concrete
 piece of the design:
 
-> **◆ Decision —** *Four question types → explicit conditional routing.* An intake step classifies each
-> question into one of the four lanes and a router sends it down the matching path — autonomous
-> decision-making over a fixed, predictable set of routes.
+> **◆ Decision —** *Four question types → explicit conditional routing.* A `classify` step detects the
+> intent signals, the lane is derived from them in code, and a conditional edge sends the question down
+> the matching path — autonomous decision-making over a fixed, predictable set of routes.
 >
 > **Trade-off —** routing can misread a borderline question, but the lanes overlap enough that the answer
 > stays correct, and a fixed route set is far easier to test than free-form tool choice.
@@ -356,8 +356,7 @@ What it's built with, where the code lives, and how the graph actually runs — 
 ```
 src/                      # application code
   llm.py                  # talks to the local LLM
-  state.py                # data shared between steps
-  graph.py                # the agent — wires the steps together
+  graph.py                # the agent — typed shared state + wires the steps together
   rag.py                  # retrieval with self-correction
   tools.py                # the two tools: search + calculator
   calculator.py           # compensation math (no LLM)
@@ -377,6 +376,7 @@ data/                     # documents + search index
   chroma/                 # search index (auto-built)
 notes/                    # design docs & decisions
 config.py                 # all settings — start here
+pytest.ini                # pytest config (repo root on sys.path)
 streamlit_app.py          # the app — run this
 ui_components.py          # shared UI pieces
 Dockerfile                # builds the app image
@@ -485,10 +485,8 @@ rails — several points hand a real decision to the LLM rather than hardcoding 
 
 - **Self-correcting retrieval** — corrective-RAG grades its own results and *rewrites the query* to retry
   when they're weak — an evaluator-optimizer loop, and the most clearly *agentic* part.
-- **LLM-driven routing** — which lane a question takes is the model's classification, not a keyword rule
-  (a real decision, though only among predefined branches).
-- **Subtask decomposition** — for a "both" question, the planner has the model break it into concrete
-  subtasks rather than applying a hardcoded split (with a fixed fallback if the output doesn't parse).
+- **LLM-driven routing** — which lane a question takes comes from the model's own intent signals, not a
+  keyword rule (a real decision, though only among predefined branches).
 - **Autonomous eligibility call** — the model judges whether a disruption was within the carrier's
   control (the "extraordinary circumstances" test) instead of matching a fixed table.
 - **Relevance grading** — the grader is the model deciding whether retrieved passages actually answer the
@@ -509,18 +507,17 @@ rails — several points hand a real decision to the LLM rather than hardcoding 
 
 ### Main graph
 
-![Main graph — intake → router → (rag · planner → calculator · fallback) → eligibility → deferred synthesize → end](docs/main_graph.png)
+![Main graph — classify → extract → (fallback · rag → eligibility · calculator) → deferred synthesize → end](docs/main_graph.png)
 
 *Generated from the live compiled graph — regenerate with `docs/generate_diagrams.py`.*
 
 Reading it node by node:
 
-- **`intake`** is the front door: it reads the question, pulls out any flight details (airports, how
-  late, what went wrong), and classifies what kind of question it is.
-- **`router`** decides which of the four paths the question takes and writes that choice into the state,
-  so the routing decision is visible in the trace.
-- **`planner`** only fires for "both at once" questions — it splits the question into its two real
-  subtasks (look up the right, compute the amount) so they can run independently.
+- **`classify`** is the front door: it reads the question and detects three independent yes/no signals
+  (is it in scope, does it ask about rights, does it ask for an amount). The four-way lane —
+  rights / amount / both / off-topic — is then derived from those signals **in code**, which is far
+  more reliable on a small model than asking it for the label directly.
+- **`extract`** pulls out any flight details (airports, how late, what went wrong) as structured fields.
 - **`eligibility`** is the one judgement call: was this disruption the airline's responsibility? Its own
   staff striking — yes, you're owed compensation. Weather or air-traffic control — extraordinary, so no
   compensation (though care or rerouting may still apply).
@@ -540,12 +537,13 @@ Reading it node by node:
 > separately testable, at the cost of the gate living one node away from the calculator that produced
 > the amount.
 
-The edges are where the parallelization lives. After the router the graph branches four ways; for money
-and mixed questions the two branches — `rag → eligibility` and `calculator` — run **in parallel and then
-converge once** at `synthesize`. That fan-out → fan-in is "decompose into subtasks and run them
-independently" made literal rather than just claimed. Because the branches are different lengths,
-`synthesize` is a *deferred* node, so LangGraph waits for both sides and joins them exactly once instead
-of firing twice.
+The edges are where the routing and the parallelization live. Routing is a conditional edge, not a
+node: after `extract` the graph branches four ways on the derived lane — off-topic → `fallback`,
+rights → `rag`, and money/mixed fan out to `rag → eligibility` **and** `calculator`. For those money and
+mixed questions the two branches run **in parallel and then converge once** at `synthesize`. That
+fan-out → fan-in is "decompose into subtasks and run them independently" made literal rather than just
+claimed. Because the branches are different lengths, `synthesize` is a *deferred* node, so LangGraph
+waits for both sides and joins them exactly once instead of firing twice.
 
 > **◆ Decision —** *Compensation and mixed queries fan out into independent branches that converge
 > once.* `rag → eligibility` and `calculator` run as parallel branches and rejoin at a *deferred*
@@ -560,21 +558,21 @@ The nodes don't pass arguments to each other — they read from and write to one
 ```python
 class AgentState(TypedDict, total=False):
     user_query: str             # the raw question
-    query_type: QueryType       # intake's label: rights_info | compensation_calc | mixed | out_of_scope
-    flight_details: dict        # origin/dest IATA, delay_hours, disruption_type, reason, rerouting_offered
-    subtasks: list[str]         # planner's split of a mixed query
+    classification: ClassifyResult  # {in_scope, asks_rights, asks_amount, query_type} — the derived lane
+    flight_details: FlightDetails   # origin/dest IATA, delay_hours, disruption_type, reason, rerouting_offered
     retrieved_docs: list[dict]  # RAG chunks (text + metadata + distance) — also feeds eligibility
     rag_answer: str             # grounded rights answer from the subgraph
     rag_citations: list[dict]   # [{source, article, url}] backing rag_answer
-    eligibility: dict           # {eligible: bool, rationale: str}
+    eligibility: EligibilityResult  # {eligible: bool, rationale: str}
     calc_result: dict           # calculator output (distance_km, band, amounts, …)
     final_answer: str           # the composed answer shown to the user
     trace: Annotated[list, operator.add]  # per-node log, append-only
 ```
 
-Two things to note. The fields fill in *as the run progresses* — `intake` writes `query_type` and
-`flight_details`, the branches write `rag_answer` / `calc_result` / `eligibility`, `synthesize` writes
-`final_answer` — so a glance at the state tells you how far a query got. And `trace` is special: it uses
+Two things to note. The fields fill in *as the run progresses* — `classify` writes `classification`,
+`extract` writes `flight_details`, the branches write `rag_answer` / `calc_result` / `eligibility`,
+`synthesize` writes `final_answer` — so a glance at the state tells you how far a query got. And `trace`
+is special: it uses
 an append-only reducer (`operator.add`) instead of being overwritten, so every node — including both
 parallel branches — *adds* its own entry. That append-only log is exactly what the UI streams to show
 the run node by node.
@@ -688,7 +686,7 @@ anywhere in it.**
 
 The calculator also makes one concession to the small model rather than to the law: it keys off **IATA
 city/metropolitan codes, not specific airport codes** (via a `METRO_ALIASES` fallback in
-`src/calculator.py`). When the intake step extracts airports from free text,
+`src/calculator.py`). When the `extract` step pulls airports from free text,
 the 3B model reliably produces the *city* code a person thinks in — London → `LON`, Paris → `PAR` — but is
 much shakier at the exact airport (`LHR` vs `LGW` vs `STN`). OpenFlights' table only carries airport codes,
 so a bare lookup of `LON` would fail. The fallback maps each metro code to the city's principal airport,
@@ -710,7 +708,7 @@ to the ~1500/3500 km band edges, the representative airport is close enough.
 **Developed on a MacBook Air (Apple M1, 8 GB RAM).** And 8 GB is the *whole* budget, shared: the OS, the
 Streamlit app, the Chroma vector store, and Ollama serving **two** models (the LLM *and* the embedder) all
 live in that same memory at once — so the headroom actually left for the model is well under 8 GB, not the
-full figure. That constraint drove both model choices below — and it's the reason "one query takes ~18 s"
+full figure. That constraint drove both model choices below — and it's the reason "one query takes ~24 s"
 in the numbers further down: on modest hardware, with everything resident simultaneously, this is honestly
 what a local-only stack costs.
 
@@ -718,8 +716,8 @@ what a local-only stack costs.
 
 - **LLM — `qwen2.5:3b-instruct`** (`temperature=0`). On 8 GB of shared memory, a 3B model is about the
   ceiling for comfortable interactive use, so the real question was *which* 3B. Qwen2.5 3B is notably
-  good at structured / JSON output — exactly what the intake-and-routing step depends on — and it's fast
-  locally. The trade-off is prose polish; the eval below is honest about where the small model shows its
+  good at structured / JSON output — exactly what the `classify` and `extract` steps depend on — and it's
+  fast locally. The trade-off is prose polish; the eval below is honest about where the small model shows its
   size (routing, the occasional rough answer). The seam makes swapping in something larger trivial if the
   hardware allows.
 - **Embeddings — `nomic-embed-text`** (also via Ollama). Reusing the Ollama runtime for embeddings avoids
@@ -728,7 +726,7 @@ what a local-only stack costs.
 
 > **◆ Decision —** *`qwen2.5:3b-instruct` — chosen for structured-output reliability under an 8 GB
 > budget.* A 3B model is about the ceiling for comfortable interactive use here; of those, Qwen2.5 3B
-> is notably strong at the JSON/structured output the intake-and-routing step depends on.
+> is notably strong at the JSON/structured output the `classify` and `extract` steps depend on.
 >
 > **Trade-off —** prose polish (the small model shows its size on routing and the occasional rough
 > answer) for reliable structured extraction and fast local inference — and the seam makes swapping in
@@ -794,14 +792,15 @@ Each of those labels is derived deliberately — from the law, not from the syst
 - `any_of` — matched on normalized `source` + `article` as a set-membership (recall) check against the
   current 4-document corpus — citing *extra* valid articles is fine; missing all the required ones fails.
 
-Two cases the small model is known to get wrong are flagged `known_fail` in the set:
+One case the small model is still known to get wrong is flagged `known_fail` in the set:
 
-- a **coverage** question about a non-EU→EU flight on a non-EU carrier that it misroutes as off-topic
-- a delay caused by **air-traffic-control restrictions** that it wrongly treats as compensable instead of
-  extraordinary
+- a **coverage** question about a non-EU→EU flight on a non-EU carrier: it now routes correctly, but
+  retrieval still doesn't surface the exact provision (Art. 3 / the EUR-Lex summary) that backs the
+  answer, so its citation misses.
 
-The runner reports these apart from the rest, so a long-standing limitation is never mistaken for a newly
-introduced bug.
+The runner reports it apart from the rest, so a long-standing limitation is never mistaken for a newly
+introduced bug. (A second case was flagged before the `classify`/`extract` refactor — a delay caused by
+**air-traffic-control restrictions** that the model wrongly treated as compensable — and is now fixed.)
 
 > **◆ Decision —** *Score the graph's intermediate state, not its final answer.* The eval checks the
 > structured values each node writes into `AgentState` (`query_type`, `eligible`, `final_eur`,
@@ -828,8 +827,8 @@ introduced bug.
 > legitimately back the same answer.
 
 > **◆ Decision —** *Flag the small model's known misses as `known_fail` and tally them separately.* The
-> two cases the 3B model reliably gets wrong are tagged in the eval set, scored like any other case, but
-> reported apart from the rest.
+> case the 3B model still reliably gets wrong (a citation miss on the coverage question) is tagged in the
+> eval set, scored like any other case, but reported apart from the rest.
 >
 > **Trade-off —** a little bookkeeping in the set, bought as a baseline that tells a long-standing known
 > limitation apart from a newly introduced regression.
@@ -846,58 +845,60 @@ pytest tests/test_calculator.py           # the deterministic calculator's unit 
 
 | Dimension | Score |
 |---|---|
-| Routing (picking the right lane) | 10/14 (71%) — the weak spot |
-| Eligibility (does it count?) | **8/8 (100%)** |
-| Amount (the gated final €) | **8/8 (100%)** |
+| Routing (picking the right lane) | **15/15 (100%)** |
+| Eligibility (does it count?) | **9/9 (100%)** |
+| Amount (the gated final €) | **9/9 (100%)** |
 | Citation present | **7/7 (100%)** |
-| Citation correct | 6/7 (86%) |
+| Citation correct | **6/6 (100%)** |
 
 **Why the rows aren't all out of 15.** Each dimension is scored only on the questions that pin a
-target for it, and the two known-fails above are tallied separately rather than folded into these
-counts:
+target for it, and the one known-fail above is tallied separately rather than folded into these counts:
 
-- **Routing** applies to every question — the 14 is the 15 minus the one known-fail routing case,
-  which is reported on its own.
+- **Routing** applies to every question, and all 15 now route correctly.
 - **Eligibility** and **Amount** apply only to the questions that carry a compensation figure (the
-  calculator and mixed cases), again minus the one known-fail counted separately — 8 each.
-- **Citation present / correct** applies only to the 7 rights and mixed questions that must cite the
-  law; calculator-only and off-topic questions carry nothing to cite.
+  calculator and mixed cases) — 9 each.
+- **Citation present / correct** applies only to the 7 questions that pin a citation requirement (the
+  rights, mixed, and ATC cases); calculator-only and off-topic questions carry nothing to cite. Citation
+  correct is 6/6 because the one remaining known-fail — the coverage-question citation miss — is counted
+  separately.
 
-In plain terms: **the money is always right, and the grounding nearly always is — the one real weakness is
-routing.** Every amount and every eligibility call was correct, every rights answer came with a real
-citation — nothing invented — and all but one pointed at the right provision. So the substance holds up
-across the board; what doesn't, and the **single weakest part of the system**, is *sorting questions into
-the right lane*. At 71% it's the lowest score by a wide margin, and the failure mode is consistent: when a
-question mixes a disruption with a word like "refund" or "how much," the small model tends to read it as a
-money question. The saving grace is that it barely matters for the answer — the money and mixed lanes both
-run the eligibility branch, so even a misrouted question comes out with the **correct number**; only the
-path it took looks different. But it's squarely the thing to fix, and the fix is already understood (force
-the intake step to fill a strict schema instead of replying freely) and queued for a later review phase.
+In plain terms: **the substance is right across the board, and routing — previously the weak spot — is now
+correct too.** Every amount and every eligibility call was correct, every rights answer came with a real
+citation (nothing invented), and routing is 15/15. The one remaining miss is a single citation: on the
+"am I even covered?" coverage question the model now picks the right lane, but retrieval doesn't surface
+the exact provision, so it cites the wrong one.
+
+Routing used to be the single weakest part of the system (10/14, 71%): when a question mixed a disruption
+with a word like "refund" or "how much," the small model read it as a money question. That fix has now
+landed — `intake` was split into a `classify` step that sets three independent intent signals via
+structured output, with the lane derived from them in code rather than asked of the model — and routing
+went to 100%. The remaining citation gap lives in the corpus/retrieval, not the graph, and is queued as a
+GitHub issue.
 
 ### Performance test
 
 The load test cycles the 15-case eval set round-robin to N=50 queries through the real graph,
 **sequential and single-threaded** (a single local Ollama serialises generation anyway), recording
-per-node timing alongside the trace. Numbers below are `N=50, 2026-06-04, qwen2.5:3b-instruct, temperature 0`.
+per-node timing alongside the trace. Numbers below are `N=50, 2026-06-14, qwen2.5:3b-instruct, temperature 0`.
 
-**End-to-end latency** (throughput 0.056 q/s, ~3.4 queries/min; wall time 890.7 s for 50 queries):
+**End-to-end latency** (throughput 0.041 q/s, ~2.5 queries/min; wall time 1204.9 s for 50 queries):
 
 | Metric | mean | p50 | p90 | p95 | max | min |
 |---|---:|---:|---:|---:|---:|---:|
-| Latency (s) | **17.8** | 18.1 | 24.6 | 25.7 | 30.5 | **2.47** |
+| Latency (s) | **24.1** | 25.1 | 32.0 | 36.3 | 38.2 | **7.82** |
 
-The `min` of 2.47 s is the off-topic fallback path — it skips the model entirely.
+The `min` of 7.82 s is the off-topic path: it still skips RAG, the calculator, and eligibility, but now
+runs two LLM calls (`classify` then `extract`) before `fallback`, so it's no longer near-instant.
 
 **Where the time goes**, per node:
 
 | node | kind | calls | total s | mean s | share |
 |---|---|---:|---:|---:|---:|
-| `rag` | LLM | 44 | 614.4 | 13.96 | **69.0%** |
-| `intake` | LLM | 50 | 213.3 | 4.27 | **24.0%** |
-| `eligibility` | LLM\* | 40 | 33.6 | 0.84 | 3.8% |
-| `planner` | LLM | 11 | 29.1 | 2.65 | 3.3% |
-| `calculator` | — | 40 | 0.16 | 0.004 | 0.0% |
-| `router` | — | 50 | 0.04 | 0.001 | 0.0% |
+| `rag` | LLM | 44 | 660.5 | 15.01 | **54.8%** |
+| `extract` | LLM | 50 | 262.9 | 5.26 | **21.8%** |
+| `classify` | LLM | 50 | 198.9 | 3.98 | **16.5%** |
+| `eligibility` | LLM\* | 28 | 82.3 | 2.94 | 6.8% |
+| `calculator` | — | 28 | 0.19 | 0.007 | 0.0% |
 | `synthesize` | — | 44 | 0.02 | 0.000 | 0.0% |
 | `fallback` | — | 6 | 0.00 | 0.000 | 0.0% |
 
@@ -906,20 +907,27 @@ The `min` of 2.47 s is the off-topic fallback path — it skips the model entire
 Reading those two tables:
 
 - **All of that time is the model thinking.** The LLM nodes are 100% of the work; the calculator, the
-  vector search, the routing and the answer-assembly add up to basically nothing. The system is
-  slow *only* because of the local model, not because of anything in our code.
-- **The single most expensive step is the RAG node (~69%)** — reading the law and writing the grounded
-  answer — followed by intake (~24%). The only lever that moves latency is the number and cost of LLM
-  calls, which is exactly why several steps were built to *avoid* a model call (deterministic synthesize,
-  a no-model eligibility shortcut, the instant off-topic bail-out). The load test confirms each of those
-  saves real time.
+  vector search, and the answer-assembly add up to basically nothing. The system is slow *only* because
+  of the local model, not because of anything in our code.
+- **The single most expensive step is the RAG node (~55%)** — reading the law and writing the grounded
+  answer — followed by the two classification calls, `extract` (~22%) and `classify` (~17%), together a
+  fixed ~9 s tax on every query. The only lever that moves latency is the number and cost of LLM calls,
+  which is why several steps were built to *avoid* one (deterministic synthesize, a no-model eligibility
+  shortcut, the off-topic bail-out that skips RAG). The load test confirms each of those saves real time.
+- **The accuracy fix has a latency cost, and it's visible here.** Splitting the old single `intake` call
+  (~4.3 s) into `classify` + `extract` (~9 s combined) is what lifted routing to 100% — but it also
+  pushed the mean from ~18 s (pre-refactor) to ~24 s. A deliberate trade: better routing for a few
+  seconds per query.
 
-**A potential improvement** is to skip the RAG subgraph for pure `compensation_calc` questions. Since
-`rag` is 69% of the cost and a money question's amount is deterministic (the calculator) with its
-eligibility usually on the no-cause deterministic path, the RAG call there only produces optional
+**Two improvements are queued.** First, skip the RAG subgraph for pure `compensation_calc` questions:
+`rag` is ~55% of the cost, yet a money question's amount is deterministic (the calculator) with its
+eligibility usually on the no-cause deterministic path, so the RAG call there only produces optional
 citations. Making the RAG branch conditional — skip it for `compensation_calc`, keep it for `rights_info`
-/ `mixed` — would drop one ~14 s subgraph call from every calc query, taking them from ~18 s to ~4–5 s.
-It's a graph-wiring change, touching the router branch and the citation expectations.
+/ `mixed` — would drop one ~15 s subgraph call from every calc query. Second, make `extract` conditional:
+it currently runs on every query before the lane is known, but only money/mixed questions need flight
+details, so skipping it on the rights and off-topic routes would claw back ~5 s there. Both are
+graph-wiring changes (touching `_route_after_extract` and the citation expectations), queued as GitHub
+issues.
 
 ### CPU vs GPU
 
@@ -927,7 +935,10 @@ Same queries, same settings, host Metal GPU vs the CPU-only container: the in-co
 **~5.5× slower** end to end (mean 25 s → 140 s on the LLM-heavy routes). A bare single-prompt benchmark
 is only ~2.2× — the gap widens in practice because each query fires several model calls and the RAG step
 does a big context prefill, which is where CPU hurts most. That ~5.5× is the entire reason the host-Ollama
-paths (options 2 and 3 below) exist — and on a Mac they're the *only* way to get the GPU at all.
+paths (options 2 and 3 below) exist — and on a Mac they're the *only* way to get the GPU at all. (These
+CPU/GPU figures are a pre-refactor measurement and weren't re-run for the `classify`/`extract` change; the
+*ratio* is expected to hold, even as absolute per-query times rose by the ~9 s the two classification
+calls now add.)
 
 ---
 
@@ -939,7 +950,7 @@ The system is **two pieces**, and which combination you run is the only real cho
   Docker or in a local venv.
 - **The Ollama server** — serves the chat and embedding models and does all the heavy lifting. Runs
   either **in Docker** or **natively on your host** — and *where it runs is what decides whether it gets
-  a GPU*, which is the difference between ~18 s/query and a few seconds.
+  a GPU*, which is the difference between ~24 s/query and a few seconds.
 
 **Prerequisites:** Docker (options 1, 3, 4) or Python 3.14 (option 2). Either way Ollama has to live
 somewhere — bundled in a container, or installed natively. The two models total ~2.2 GB; the first run
@@ -963,7 +974,7 @@ are quick. The app waits for Ollama's healthcheck before starting. **Same comman
 Windows (Docker Desktop / WSL2 backend), and inside WSL2.**
 
 The catch: a Linux container can't use a GPU here without extra setup (that's option 4), so this is
-**CPU-only — ~18 s/query**. Simple and stable, and the path I verified end-to-end. Ideal for a first
+**CPU-only — ~24 s/query**. Simple and stable, and the path I verified end-to-end. Ideal for a first
 look; for real use, prefer a GPU path below.
 
 ### 2 — Fully local, no Docker  ·  ✅ tested
