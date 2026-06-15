@@ -3,15 +3,19 @@
 Both capabilities are decorated `@tool`s (not plain functions buried in nodes) so there's
 no argument about whether they count (CLAUDE.md guardrail #2):
 
-- `retrieve_passenger_rights` — retrieval, lives here because the RAG subgraph uses it
-  (Phase 2). It embeds the query (with the `search_query:` prefix) and runs a top-k
-  similarity search over the persisted Chroma collection.
+- `retrieve_passenger_rights` — the shared retrieval primitive over the Reg. 261/2004 corpus.
+  It embeds the query (with the `search_query:` prefix) and runs a top-k similarity search
+  over the persisted Chroma collection. Two callers use it: the corrective-RAG subgraph
+  (`src/rag.py`), which grades/rewrites and generates a cited answer from the hits, and the
+  main graph's `eligibility` node (`src/graph.py`), which grounds its extraordinary-
+  circumstances judgment on a cause-specific query — retrieval only, no generation.
 - `calculate_compensation` — the non-retrieval, deterministic, LLM-free calculator. A thin
   `@tool` wrapper; the pure Art. 7 logic (haversine, band table, threshold/reduction) lives
   in `src/calculator.py` and is what the test set targets.
 
-`retrieve_passenger_rights` returns chunk text + citation metadata so the subgraph's
-`generate` node can cite `source` + `article` and never dumps raw text as a citation.
+`retrieve_passenger_rights` returns chunk text + citation metadata, so a caller can cite
+`source` + `article` (via `citations_from_docs` in `src/rag.py`) and never dump raw text as a
+citation.
 """
 
 from langchain_core.tools import tool

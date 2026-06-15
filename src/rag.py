@@ -43,18 +43,38 @@ class RAGState(TypedDict, total=False):
     steps: Annotated[list, operator.add]  # per-node trace for the UI
 
 
-def _passages(documents: list[dict], max_chars: int | None = None) -> str:
+def passages_block(documents: list[dict], max_chars: int | None = None) -> str:
     """Number the retrieved chunks with their citation tags for an LLM prompt.
 
-    `max_chars` truncates each passage — used by the grader so a small model judges
-    relevance on focused snippets rather than being swamped by full sections.
+    Shared by the RAG `grade`/`generate` nodes and the main graph's `eligibility` grounding,
+    so every passage block fed to the small model has the same shape. `max_chars` truncates
+    each passage — used by the grader (and eligibility) so the model judges on focused snippets
+    rather than being swamped by full sections.
     """
     lines = []
     for i, d in enumerate(documents, 1):
         m = d["metadata"]
         text = d["text"] if max_chars is None else d["text"][:max_chars]
         lines.append(f"[{i}] ({m['source']} · {m['article']})\n{text}")
-    return "\n\n".join(lines)
+    return "\n\n".join(lines) if lines else "(no passages retrieved)"
+
+
+def citations_from_docs(docs: list[dict]) -> list[dict]:
+    """Build dedup'd citation dicts from retrieved docs (metadata only, never raw text).
+
+    One citation per (source, article) pair, in first-seen order. Shared by the `generate`
+    node and the eligibility grounding in the main graph so both emit the same
+    `{source, article, url}` shape — which is what lets `synthesize` dedup-merge the two
+    citation sets correctly.
+    """
+    seen, citations = set(), []
+    for d in docs:
+        m = d["metadata"]
+        key = (m["source"], m["article"])
+        if key not in seen:
+            seen.add(key)
+            citations.append({"source": m["source"], "article": m["article"], "url": m.get("url", "")})
+    return citations
 
 
 # --------------------------------------------------------------------------- nodes
@@ -82,7 +102,7 @@ def grade_documents(state: RAGState) -> dict:
     """
     prompt = (
         f"Question: {state['question']}\n\n"
-        f"Retrieved passages:\n{_passages(state['documents'], max_chars=600)}\n\n"
+        f"Retrieved passages:\n{passages_block(state['documents'], max_chars=600)}\n\n"
         "Is at least ONE passage on-topic and useful for answering this question about EU "
         "air passenger rights? A passage counts as relevant even if it only partly helps. "
         "Answer with one word: yes or no."
@@ -132,7 +152,7 @@ def generate(state: RAGState) -> dict:
     docs = state["documents"]
     prompt = (
         f"Question: {state['question']}\n\n"
-        f"Passages:\n{_passages(docs)}\n\n"
+        f"Passages:\n{passages_block(docs)}\n\n"
         "Answer the question using ONLY the information in the passages above, citing the "
         "passages you rely on inline like [1], [2]. Do NOT use outside knowledge and do NOT "
         "invent figures, articles, or rules. If the passages genuinely do not address the "
@@ -154,13 +174,7 @@ def generate(state: RAGState) -> dict:
     ).content.strip()
 
     # Citations reference metadata (source + article + url), never raw chunk text.
-    seen, citations = set(), []
-    for d in docs:
-        m = d["metadata"]
-        key = (m["source"], m["article"])
-        if key not in seen:
-            seen.add(key)
-            citations.append({"source": m["source"], "article": m["article"], "url": m.get("url", "")})
+    citations = citations_from_docs(docs)
     return {"answer": answer, "citations": citations, "steps": [{"node": "generate", "n_citations": len(citations)}]}
 
 

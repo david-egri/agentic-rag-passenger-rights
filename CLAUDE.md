@@ -58,40 +58,52 @@ env-var overrides. Read them through `config.py` — don't hardcode knobs at cal
 ## Architecture
 
 **State** (defined in `src/graph.py`): a typed `AgentState` carrying `user_query`,
-`classification` (`{in_scope, asks_rights, asks_amount, query_type}`), `flight_details`,
-`retrieved_docs`, `rag_answer`, `rag_citations`, `eligibility`, `calc_result`, `final_answer`,
-and `trace` (a per-node log surfaced in the UI). The state types live alongside the graph in
-`src/graph.py`.
+`classification` (`{in_scope, asks_rights, asks_amount, query_type}`), `flight_details`, the
+rights pipeline's `rag_docs` + `rag_answer`, the eligibility pipeline's `eligibility` verdict +
+`eligibility_docs`, `calc_result`, `final_answer`, the merged `citations` (built at `synthesize`),
+and `trace` (a per-node log surfaced in the UI). Retrieved **docs** are the primary evidence,
+stored per pipeline; `citations` are derived from them once at the end — so no field changes
+meaning mid-run. The state types live alongside the graph in `src/graph.py`.
 
 **Main graph** (`src/graph.py`) — the control flow, as explicit nodes:
 
 1. `classify` — detect three boolean intent signals (`in_scope` / `asks_rights` / `asks_amount`)
-   via `with_structured_output`; `query_type` is derived from them in code, not asked of the LLM
-2. `extract` — pull structured flight entities (`with_structured_output`)
-3. `eligibility` — decide whether the disruption is compensable (extraordinary-circumstances logic)
-4. `calculator` — invoke the deterministic compensation tool
-5. `synthesize` — merge rights answer + amount + citations + disclaimer (deferred fan-in)
-6. `fallback` — out-of-scope handling (the hallucination firewall)
+   via `with_structured_output`; `query_type` is derived from them in code as a report-only label,
+   not a control signal
+2. `rights` — run the corrective-RAG subgraph on the user's question → cited answer (the
+   `asks_rights` pipeline)
+3. `extract` — pull structured flight entities (`with_structured_output`); the `asks_amount`
+   pipeline only
+4. `eligibility` — decide whether the disruption is compensable (extraordinary-circumstances
+   logic), grounding on its own cause-specific retrieval
+5. `calculator` — invoke the deterministic compensation tool
+6. `synthesize` — merge rights answer + gated amount + citations + disclaimer (deferred fan-in)
+7. `fallback` — out-of-scope handling (the hallucination firewall)
 
-Routing lives on the conditional edges, not a node: after `extract`, `out_of_scope → fallback`,
-`rights_info → rag`, and `compensation_calc` / `mixed` fan out to `[rag, calculator]`.
+Routing lives on the conditional edges, not a node, and dispatches on the **signals** (not the
+derived `query_type` label): after `classify`, `¬in_scope → fallback`, `asks_rights → rights`, and
+`asks_amount → extract` — a message that asks both fans out to `rights` **and** `extract`. `extract`
+then feeds `calculator` and `eligibility` as parallel siblings.
 
-**RAG subgraph** (`src/rag.py`): a modular, separately compiled `StateGraph` added to the main
-graph as a node. Corrective RAG —
+**RAG subgraph** (`src/rag.py`): a modular, separately compiled `StateGraph` invoked by the
+`rights` node. Corrective RAG —
 `retrieve → grade_documents → (relevant? generate : rewrite_query → retrieve)` — with a
 **bounded** rewrite loop. The grade→rewrite loop is the most genuinely agentic part of the system.
 
 **Tools** (`src/tools.py`), both explicit LangChain `@tool`s:
 
-- `retrieve_passenger_rights(query)` — retrieval (used inside the RAG subgraph)
+- `retrieve_passenger_rights(query)` — retrieval; the shared primitive used by both the RAG
+  subgraph and the `eligibility` node's cause-specific grounding
 - `calculate_compensation(origin_iata, dest_iata, delay_hours, disruption_type, rerouting_offered=False)`
   — non-retrieval: haversine distance from OpenFlights coords → distance band → amount, then the
   3-hour threshold and 50% reduction rules
 
-**`compensation_calc` and `mixed` queries** run as a real fan-out → fan-in: a RAG/eligibility
-branch (`rag → eligibility`) and a calculator branch execute as independent parallel branches and
-converge at the deferred `synthesize` node, where the eligibility gate (`final = eligible ?
-candidate : 0`) is applied.
+**Amount queries** (`asks_amount`) run as a real fan-out → fan-in: after `extract`, the
+`calculator` and `eligibility` branches execute as independent parallel siblings and converge at
+the deferred `synthesize` node, where the eligibility gate (`final = eligible ? candidate : 0`) is
+applied. A `mixed` query (`asks_rights` + `asks_amount`) additionally runs the `rights` branch,
+which converges at the same `synthesize`. `calculator` stays eligibility-agnostic — the gate is the
+only coupling, applied at the fan-in.
 
 This is a **directed/structured agent** — the graph governs control flow rather than letting the
 model freely choose tools. That's a deliberate trade-off: predictability and testability over
@@ -170,6 +182,9 @@ and update this file if so.
   EU is covered only on EU carriers. `eligibility`/RAG must reflect this.
 - **Own-airline staff strike is *not* extraordinary** (compensation due); weather / ATC /
   security generally *are* extraordinary (no compensation, though care/rerouting may still apply).
+  The eligibility verdict hinges on the extracted `reason` keeping *who* is striking (own crew vs a
+  third party) — `extract` must not flatten it to a bare "strike", or an own-staff strike gets
+  mis-gated to €0. See the cause-specificity finding in `notes/EVAL_RESULTS.md`.
 - **The latency bottleneck is local-LLM generation** (plus the rewrite loop) — vector search and
   the calculator are negligible. Confirmed by per-node timing in `notes/EVAL_RESULTS.md`.
 - **Licensing:** OpenFlights data is ODbL (attribute it in `data/SOURCES.md`); EUR-Lex content is

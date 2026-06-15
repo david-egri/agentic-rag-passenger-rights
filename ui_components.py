@@ -85,14 +85,14 @@ def _flight_summary(details: dict) -> str:
 
 
 _AGENT_NODE_ICONS = {
-    "classify": "🏷️", "extract": "📥", "rag": "🔎",
+    "classify": "🏷️", "extract": "📥", "rights": "🔎",
     "eligibility": "⚖️", "calculator": "🧮", "synthesize": "🧩", "fallback": "🚫",
 }
 
 
 def render_agent_trace(steps: list[dict]):
     """Render the main agent run node-by-node — the "agent steps" panel that scores the
-    "demonstrate agent operation" requirement. Each node prints what it decided; the `rag`
+    "demonstrate agent operation" requirement. Each node prints what it decided; the `rights`
     node drills down into the corrective-RAG subgraph (reusing render_rag_trace)."""
     for i, s in enumerate(steps, 1):
         render_agent_step(i, s)
@@ -108,7 +108,7 @@ def render_agent_step(i: int, s: dict):
     elif node == "extract":
         st.markdown(head)
         st.caption(f"flight details: {_flight_summary(s.get('flight_details') or {})}")
-    elif node == "rag":
+    elif node == "rights":
         st.markdown(
             f"{head} → retrieved {s['n_docs']} passages, {s['rewrites']} rewrite(s), "
             f"{s['n_citations']} citation(s)"
@@ -118,7 +118,11 @@ def render_agent_step(i: int, s: dict):
                 render_rag_trace(s["rag_steps"])
     elif node == "eligibility":
         verdict = "✅ compensable" if s.get("eligible") else "❌ extraordinary → no cash"
-        st.markdown(f"{head} → {verdict}")
+        grounding = (
+            f" (grounded on {s['n_docs']} cause-specific passage(s))" if s.get("retrieved")
+            else " (no cause stated → owed in principle)"
+        )
+        st.markdown(f"{head} → {verdict}{grounding}")
         st.caption(s.get("rationale", ""))
     elif node == "calculator":
         if s.get("error"):
