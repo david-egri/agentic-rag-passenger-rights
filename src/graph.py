@@ -1,70 +1,95 @@
-"""The main agent graph — the 7-node directed agent that ties P1–P3 together.
+"""The main agent graph — typed state + the directed agent that ties retrieval, eligibility,
+and the deterministic calculator together.
 
-Topology (matches §4.3 of the proposal exactly):
+Topology:
 
-    START → intake → router ─┬─ out_of_scope ──→ fallback → END
-                             ├─ rights_info ───→ rag ───────────────────→ synthesize → END
-                             ├─ compensation_calc → [rag, calculator]  (fan-out)
-                             └─ mixed → planner → [rag, calculator]     (fan-out)
+    START → classify → extract ─┬─ out_of_scope ──→ fallback → END
+                                ├─ rights_info ───→ rag ──────────────→ synthesize → END
+                                └─ compensation_calc / mixed → [rag, calculator]  (fan-out)
 
         rag → (rights_info? → synthesize : → eligibility)
-        eligibility → synthesize        calculator → synthesize         (fan-in)
+        eligibility → synthesize        calculator → synthesize        (fan-in)
 
-The seven main nodes are **intake, router, planner, eligibility, calculator, synthesize,
-fallback** (≥5 required). The corrective-RAG **subgraph** is reused in both the
-`rights_info` path and the eligibility branch via a single shared `rag` node, and does NOT
-count toward the seven (CLAUDE.md guardrail #3) — the `rag` node *invokes the compiled
-`rag_graph`*, it does not reimplement it.
+`classify` detects three boolean intent signals (in_scope / asks_rights / asks_amount) and the
+query-type lane is derived from them in code (`_derive_query_type`) — more robust than asking the
+3B model for the label directly. `extract` pulls the flight entities. The corrective-RAG
+**subgraph** is reused in both the rights_info path and the eligibility branch via a single shared
+`rag` node — it *invokes* the compiled `rag_graph`, it does not reimplement retrieval.
 
-`compensation_calc` and `mixed` are a real **fan-out → fan-in**: the eligibility branch
+compensation_calc and mixed are a real **fan-out → fan-in**: the eligibility branch
 (rag → eligibility) and the calculator branch run as independent siblings and converge at
-`synthesize`. The only coupling is the gate applied there: `final = eligible ? candidate
-: 0` — the calculator never waits on eligibility (DECISIONS: calculator is
-eligibility-agnostic). `synthesize` is a **deferred** node so it waits for *both* branches
-even though they are different lengths (the calculator branch is one hop, the eligibility
-branch two) — LangGraph would otherwise fire it twice.
+`synthesize`. The only coupling is the gate applied there: `final = eligible ? candidate : 0` —
+the calculator never waits on eligibility. `synthesize` is a **deferred** node so it waits for
+*both* branches even though they are different lengths (calculator is one hop, eligibility two).
 
-Every node appends a step to `state["trace"]` (append-only reducer) so the Streamlit Agent
-tab can render the run node-by-node.
+Every node appends a step to `state["trace"]` (append-only reducer) so the Streamlit Agent tab
+can render the run node-by-node. All model access goes through the `get_llm()` seam
+(CLAUDE.md constraint #1) — nodes use `get_llm().with_structured_output(...)` for typed output.
 """
 
 from __future__ import annotations
 
-import json
+import operator
+from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, START, StateGraph
 
 from src.calculator import DISRUPTION_TYPES
 from src.llm import get_llm
 from src.rag import rag_graph
-from src.state import AgentState
 from src.tools import calculate_compensation
 
-# ---------------------------------------------------------------------------- helpers
+SYSTEM_PROMPT = (
+    "You are an assistant for EU air passenger rights under Regulation (EC) No 261/2004, which "
+    "covers ONLY flight delays, cancellations, denied boarding, and the compensation/care they "
+    "trigger. Follow the task instructions and return only the requested structured data."
+)
 
-def _parse_json(text: str) -> dict:
-    """Best-effort JSON extraction from a small model's reply.
 
-    qwen2.5:3b usually returns clean JSON but sometimes wraps it in ```json fences or adds
-    a sentence. Strip fences, then fall back to slicing the outermost braces. Returns {} on
-    failure so callers can apply defaults rather than crash.
-    """
-    t = text.strip()
-    if t.startswith("```"):
-        t = t.split("```", 2)[1] if "```" in t[3:] else t
-        t = t.removeprefix("json").removeprefix("JSON").strip()
-        t = t.split("```")[0].strip()
-    try:
-        return json.loads(t)
-    except (json.JSONDecodeError, ValueError):
-        start, end = t.find("{"), t.rfind("}")
-        if 0 <= start < end:
-            try:
-                return json.loads(t[start : end + 1])
-            except (json.JSONDecodeError, ValueError):
-                return {}
-        return {}
+# ------------------------------------------------------------------------------- state
 
+QueryType = Literal["rights_info", "compensation_calc", "mixed", "out_of_scope"]
+
+
+class IntentSignals(TypedDict):       # what classify's LLM call emits
+    in_scope: bool
+    asks_rights: bool
+    asks_amount: bool
+
+
+class ClassifyResult(IntentSignals):  # the signals plus the query_type derived from them
+    query_type: QueryType
+
+
+class FlightDetails(TypedDict):
+    origin_iata: str | None
+    dest_iata: str | None
+    delay_hours: float | None
+    disruption_type: str | None
+    reason: str | None
+    rerouting_offered: bool | None
+
+
+class EligibilityResult(TypedDict):
+    eligible: bool
+    rationale: str
+
+
+class AgentState(TypedDict, total=False):
+    user_query: str                       # the raw question from the user
+    classification: ClassifyResult        # classify's verdict; the edge dispatches on query_type
+    flight_details: FlightDetails         # entities extracted by the extract node
+    retrieved_docs: list[dict]            # RAG chunks (text + metadata + distance) — feeds eligibility
+    rag_answer: str                       # grounded rights answer from the RAG subgraph
+    rag_citations: list[dict]             # [{source, article, url}] backing rag_answer
+    eligibility: EligibilityResult        # the eligibility verdict {eligible, rationale}
+    calc_result: dict                     # calculate_compensation output (distance_km, band, amounts, …)
+    final_answer: str                     # the composed answer shown to the user
+    trace: Annotated[list, operator.add]  # per-node log for the Agent tab (append-only)
+
+
+# ----------------------------------------------------------------------------- helpers
 
 def _docs_context(docs: list[dict], n: int = 4, max_chars: int = 600) -> str:
     """Number the top retrieved chunks (truncated) as grounding context for a prompt."""
@@ -75,54 +100,105 @@ def _docs_context(docs: list[dict], n: int = 4, max_chars: int = 600) -> str:
     return "\n\n".join(lines) if lines else "(no passages retrieved)"
 
 
+def _derive_query_type(signals: dict) -> QueryType:
+    """Map the classifier's boolean signals to a query-type lane."""
+    if not signals.get("in_scope", True):
+        return "out_of_scope"
+    asks_rights = signals.get("asks_rights", False)
+    asks_amount = signals.get("asks_amount", False)
+    if asks_rights and asks_amount:
+        return "mixed"
+    if asks_amount:
+        return "compensation_calc"
+    return "rights_info"
+
+
 # ------------------------------------------------------------------------------- nodes
 
-def intake(state: AgentState) -> dict:
-    """Extract flight entities and classify intent — one structured-JSON LLM call.
+def classify(state: AgentState) -> dict:
+    """Classify the question by detecting three boolean intent signals; derive the lane in code.
 
-    Writes `flight_details` and `query_type`. Tolerant of missing fields: a general rights
-    question carries no flight, an out-of-scope question carries neither.
+    Asking the 3B model for three independent booleans (in_scope / asks_rights / asks_amount) and
+    deriving `query_type` from them is more robust than asking it for the four-way label directly.
     """
     query = state["user_query"]
-    prompt = (
-        f'User message: "{query}"\n\n'
-        "You are the intake step of an EU air-passenger-rights assistant (Regulation (EC) "
-        "No 261/2004), which covers ONLY flight delays, cancellations, denied boarding, and "
-        "the compensation/care they trigger. Do two things and return JSON only:\n"
-        "1. Classify `query_type` as exactly one of:\n"
-        '   - "rights_info": asks about rights/rules for a disruption in general, no specific '
-        "amount needed.\n"
-        '   - "compensation_calc": asks HOW MUCH money for a specific disrupted flight, '
-        "without also asking to explain the rights.\n"
-        '   - "mixed": asks BOTH what they are entitled to / their rights AND how much money.\n'
-        '   - "out_of_scope": NOT about a flight disruption under Reg. 261 — e.g. baggage '
-        "fees, pets, seat selection, visas, ticket pricing, refunds for voluntary changes, "
-        "non-flight topics. Out-of-scope EVEN IF it mentions a flight or asks 'how much'.\n"
-        "Examples: 'What are my rights if my flight is cancelled?' → rights_info. "
-        "'My BUD→LHR flight was 4h late, how much do I get?' → compensation_calc. "
-        "'My flight was cancelled for a strike — am I entitled to anything and how much?' → "
-        "mixed. 'How much to bring a dog on the plane?' → out_of_scope.\n"
-        "2. Extract `flight_details` when present (else null fields): origin_iata, dest_iata "
-        "(3-letter IATA codes; infer from city names if obvious, else null), delay_hours "
-        "(number, arrival delay), disruption_type (one of "
-        f"{DISRUPTION_TYPES}), reason (the stated cause of disruption, e.g. \"weather\", "
-        '"airline staff strike", or null), rerouting_offered (true/false/null).\n\n'
-        'Return ONLY JSON: {"query_type": "...", "flight_details": {"origin_iata": ..., '
-        '"dest_iata": ..., "delay_hours": ..., "disruption_type": ..., "reason": ..., '
-        '"rerouting_offered": ...}}'
-    )
-    reply = get_llm().invoke(
-        [
-            SystemMessage(content="You extract structured data and return JSON only — no prose, no fences."),
-            HumanMessage(content=prompt),
-        ]
-    ).content
-    parsed = _parse_json(reply)
+    prompt = f"""
+        User message: "{query}"
 
-    query_type = parsed.get("query_type")
-    if query_type not in ("rights_info", "compensation_calc", "mixed", "out_of_scope"):
-        query_type = "rights_info"  # safest default: ground an answer rather than decline
-    details = parsed.get("flight_details") or {}
+        Determine three things about the message and set each independently (a message can be both
+        asks_rights and asks_amount at once):
+
+           - in_scope: Is it about a flight disruption under Reg. 261 — a delay, cancellation, or
+             denied boarding (and the compensation/care it triggers)? Set false for anything else,
+             including fees, charges, or prices for services (baggage / checked-bag fees, seat
+             selection, pets, ticket pricing, visas) and non-flight topics — false EVEN IF it asks
+             "how much" or "how much does it cost / charge".
+           - asks_rights: Does it ask what the passenger is entitled to, their rights, or WHETHER a
+             remedy applies — e.g. "what are my rights?", "am I entitled to anything?", "can I get a
+             refund?" (an entitlement / eligibility question)?
+           - asks_amount: Does it ask for the cash-compensation FIGURE — e.g. "how much", "how much
+             compensation", "how much am I owed", "how much will I get", "what compensation do I get",
+             "what am I owed", "what amount", "how many euros"? Asking only WHETHER a remedy or refund
+             applies, without asking for the figure, is NOT asks_amount (that is asks_rights).
+
+        Examples:
+           - 'What are my rights if my flight is delayed?'
+             → in_scope=true, asks_rights=true, asks_amount=false
+           - 'My flight was 4 hours late — how much will I get?'
+             → in_scope=true, asks_rights=false, asks_amount=true
+           - 'My flight was cancelled — am I entitled to anything, and how much?'
+             → in_scope=true, asks_rights=true, asks_amount=true
+           - 'How much does it cost to check a second bag?'
+             → in_scope=false, asks_rights=false, asks_amount=false
+        """
+    try:
+        signals = get_llm().with_structured_output(IntentSignals).invoke(
+            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        )
+    except Exception:  # small-model schema miss → _derive_query_type defaults to rights_info
+        signals = {}
+    if not isinstance(signals, dict):
+        signals = {}
+
+    query_type = _derive_query_type(signals)
+    classification = {**signals, "query_type": query_type}
+    return {"classification": classification, "trace": [{"node": "classify", "query_type": query_type}]}
+
+
+def extract(state: AgentState) -> dict:
+    """Extract structured flight details from the question (null for anything not stated)."""
+    query = state["user_query"]
+    prompt = f"""
+        User message: "{query}"
+
+        Extract `flight_details` from the message. Use null for any field not stated:
+           - origin_iata: 3-letter IATA code of the DEPARTURE airport — where the flight leaves from
+             ("from …"). Infer from the city name if obvious, else null.
+           - dest_iata: 3-letter IATA code of the ARRIVAL airport — the final destination ("to …").
+             Infer from the city name if obvious, else null.
+           - delay_hours: arrival delay in hours, as a number (e.g. 4 for "4 hours late"); null if no
+             delay is stated.
+           - disruption_type: one of {DISRUPTION_TYPES} — "delay" for a late flight, "cancellation"
+             for a cancelled one, "denied_boarding" for being bumped / overbooked.
+           - reason: the cause of disruption ONLY if it is explicitly stated (e.g. "weather", "airline
+             staff strike"); null if no cause is given. Do not infer or invent a cause.
+           - rerouting_offered: true if the airline offered an alternative flight / re-routing, false
+             if it did not, null if not mentioned.
+
+        Direction matters — do not swap origin and destination. The origin is where the flight departs
+        ("from …"); the destination is where it arrives ("to …"). In "A to B" or "A → B", A is the
+        origin and B is the destination.
+
+        Example (no cause stated, so reason is null): "My BUD to LHR flight was delayed 4 hours" →
+        origin_iata=BUD, dest_iata=LHR, delay_hours=4, disruption_type=delay, reason=null,
+        rerouting_offered=null.
+        """
+    try:
+        details = get_llm().with_structured_output(FlightDetails).invoke(
+            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        )
+    except Exception:  # small-model schema miss → keep going with no details
+        details = {}
     if not isinstance(details, dict):
         details = {}
     # Normalise IATA codes that did come through.
@@ -130,61 +206,16 @@ def intake(state: AgentState) -> dict:
         if isinstance(details.get(k), str):
             details[k] = details[k].strip().upper() or None
 
-    return {
-        "query_type": query_type,
-        "flight_details": details,
-        "trace": [{"node": "intake", "query_type": query_type, "flight_details": details}],
-    }
-
-
-def router(state: AgentState) -> dict:
-    """Explicit routing node — records the decision in the trace (the conditional edge that
-    actually dispatches reads `query_type`). A node, not a bare conditional edge, so the
-    routing choice is visible in the Agent tab (CLAUDE.md guardrail #5)."""
-    qt = state["query_type"]
-    return {"trace": [{"node": "router", "route": qt}]}
-
-
-def planner(state: AgentState) -> dict:
-    """Decompose a `mixed` query into subtasks — the LLM emits them (not a hardcoded split).
-
-    The subtasks are recorded for the trace; the actual independent execution is the
-    fan-out to the rag and calculator branches wired after this node.
-    """
-    prompt = (
-        f'User question: "{state["user_query"]}"\n\n'
-        "This question needs BOTH a rights explanation and a compensation amount. Break it "
-        "into 2-4 concrete subtasks an assistant would carry out. Return ONLY a JSON array "
-        'of short strings, e.g. ["Determine if the disruption is compensable", "Compute the '
-        'compensation amount for the route and delay", "Explain the passenger\'s rights"].'
-    )
-    reply = get_llm().invoke(
-        [
-            SystemMessage(content="You decompose a task into subtasks and return a JSON array of strings only."),
-            HumanMessage(content=prompt),
-        ]
-    ).content
-    parsed = _parse_json(reply if reply.strip().startswith("{") else f'{{"subtasks": {reply.strip()}}}')
-    subtasks = parsed.get("subtasks") if isinstance(parsed, dict) else None
-    if not isinstance(subtasks, list) or not subtasks:
-        # Fallback decomposition keeps the trace meaningful if the small model misbehaves.
-        subtasks = [
-            "Determine whether the disruption is compensable (extraordinary circumstances?)",
-            "Compute the statutory compensation amount for the route and delay",
-            "Explain the passenger's rights and combine into one answer",
-        ]
-    subtasks = [str(s) for s in subtasks][:4]
-    return {"subtasks": subtasks, "trace": [{"node": "planner", "subtasks": subtasks}]}
+    return {"flight_details": details, "trace": [{"node": "extract", "flight_details": details}]}
 
 
 def rag(state: AgentState) -> dict:
     """Invoke the compiled corrective-RAG **subgraph** and map its result into AgentState.
 
-    This is the subgraph attached as a node (CLAUDE.md guardrail #3): it calls
-    `rag_graph.invoke`, it does not reimplement retrieval. Schemas differ (RAGState vs
-    AgentState), so the mapping happens here at the boundary — the documented LangGraph
-    pattern for a different-schema subgraph. The retrieved docs feed the eligibility node
-    (in the eligibility branch); the answer/citations feed synthesize.
+    This is the subgraph attached as a node (CLAUDE.md guardrail #3): it calls `rag_graph.invoke`,
+    it does not reimplement retrieval. Schemas differ (RAGState vs AgentState), so the mapping
+    happens here at the boundary. The retrieved docs feed the eligibility node (in the eligibility
+    branch); the answer/citations feed synthesize.
     """
     out = rag_graph.invoke({"question": state["user_query"], "query": state["user_query"], "rewrites": 0})
     return {
@@ -206,9 +237,9 @@ def rag(state: AgentState) -> dict:
 def eligibility(state: AgentState) -> dict:
     """Autonomous decision: is the disruption compensable, or an extraordinary circumstance?
 
-    Combines the extracted `reason` with the retrieved rules (the rag node runs first in
-    this branch) and the well-known EU261 carve-outs. Sets `eligibility {eligible,
-    rationale}`. Eligibility-agnostic of the amount — the gate is applied at synthesize.
+    Combines the extracted `reason` with the retrieved rules (the rag node runs first in this
+    branch) and the well-known EU261 carve-outs. Eligibility-agnostic of the amount — the gate is
+    applied at synthesize.
     """
     details = state.get("flight_details") or {}
     reason = (details.get("reason") or "").strip()
@@ -227,35 +258,44 @@ def eligibility(state: AgentState) -> dict:
     context = _docs_context(state.get("retrieved_docs", []))
     # Reframed around "within the carrier's control" — asking the small model directly about
     # "extraordinary" invites the error of treating every strike as extraordinary.
-    prompt = (
-        f"Cause of the flight disruption: \"{reason}\"\n\n"
-        f"Relevant retrieved rules:\n{context}\n\n"
-        "Decide whether cash compensation under Art. 7 is in principle owed. The test: was "
-        "the cause WITHIN the airline's own control, or an EXTRAORDINARY circumstance beyond "
-        "it?\n"
-        "- WITHIN the carrier's control → compensation IS owed (eligible = true): the "
-        "airline's OWN staff/crew strike, technical or operational problems, routine "
-        "maintenance, overbooking.\n"
-        "- EXTRAORDINARY, beyond control → NO cash compensation (eligible = false), though "
-        "care/re-routing still apply: bad weather, air-traffic-control restrictions, security "
-        "risks, political instability, and strikes by THIRD PARTIES (e.g. airport staff, "
-        "ATC), not the airline's own staff.\n"
-        "Worked examples: \"strike by the airline's own cabin crew\" → eligible = true (own "
-        "staff, within control). \"snowstorm\" → eligible = false. \"air traffic control "
-        "strike\" → eligible = false (third party).\n\n"
-        'Return ONLY JSON: {"eligible": true/false, "rationale": "one sentence naming the '
-        'cause and whether it was within the carrier\'s control"}'
-    )
-    reply = get_llm().invoke(
-        [
-            SystemMessage(
-                content="You judge EU261 compensation eligibility by whether the cause was within "
-                "the airline's control. Return JSON only."
-            ),
-            HumanMessage(content=prompt),
-        ]
-    ).content
-    parsed = _parse_json(reply)
+    prompt = f"""
+        Cause of the flight disruption: "{reason}"
+
+        Relevant retrieved rules:
+        {context}
+
+        Decide whether cash compensation under Art. 7 is in principle owed. The test: was the cause
+        WITHIN the airline's own control, or an EXTRAORDINARY circumstance beyond it?
+
+        Causes WITHIN the carrier's control — compensation IS owed (eligible = true):
+           - the airline's OWN staff/crew strike
+           - technical or operational problems
+           - routine maintenance
+           - overbooking
+
+        EXTRAORDINARY causes beyond the carrier's control — NO cash compensation (eligible = false),
+        though care/re-routing still apply:
+           - bad weather
+           - air-traffic-control restrictions
+           - security risks
+           - political instability
+           - strikes by THIRD PARTIES (e.g. airport staff, ATC), not the airline's own staff
+
+        Worked examples:
+           - "strike by the airline's own cabin crew" → eligible = true (own staff, within control)
+           - "snowstorm" → eligible = false
+           - "air traffic control strike" → eligible = false (third party)
+
+        Set `rationale` to one sentence naming the cause and whether it was within the carrier's control.
+        """
+    try:
+        parsed = get_llm().with_structured_output(EligibilityResult).invoke(
+            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        )
+    except Exception:  # small-model schema miss → default to owed-in-principle below
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
     eligible = parsed.get("eligible")
     if not isinstance(eligible, bool):
         eligible = True  # default to owed-in-principle; synthesize still gates on the calc
@@ -267,9 +307,9 @@ def eligibility(state: AgentState) -> dict:
 def calculator(state: AgentState) -> dict:
     """Call the deterministic, LLM-free `calculate_compensation` tool from `flight_details`.
 
-    Computes the *statutory candidate* amount (eligibility-agnostic). Degrades gracefully:
-    if the route can't be resolved (missing/unknown IATA), records an error in `calc_result`
-    instead of crashing the run — synthesize handles the missing-amount case.
+    Computes the *statutory candidate* amount (eligibility-agnostic). Degrades gracefully: if the
+    route can't be resolved (missing/unknown IATA), records an error in `calc_result` instead of
+    crashing the run — synthesize handles the missing-amount case.
     """
     details = state.get("flight_details") or {}
     origin, dest = details.get("origin_iata"), details.get("dest_iata")
@@ -304,10 +344,10 @@ def calculator(state: AgentState) -> dict:
 def synthesize(state: AgentState) -> dict:
     """Fan-in: apply the eligibility gate and compose the grounded final answer.
 
-    Deterministic assembly from already-grounded parts (the RAG answer is itself grounded +
-    cited; the calc_result is deterministic) — no extra LLM call, so nothing new can be
-    hallucinated here and the numbers/citations stay intact. The gate is the only coupling
-    between the two branches: `final = eligible ? candidate : 0`.
+    Deterministic assembly from already-grounded parts (the RAG answer is itself grounded + cited;
+    the calc_result is deterministic) — no extra LLM call, so nothing new can be hallucinated here
+    and the numbers/citations stay intact. The gate is the only coupling between the two branches:
+    `final = eligible ? candidate : 0`.
     """
     parts: list[str] = []
     rag_answer = state.get("rag_answer", "").strip()
@@ -370,31 +410,26 @@ def fallback(state: AgentState) -> dict:
 
 # ----------------------------------------------------------------------------- wiring
 
-def _route_from_router(state: AgentState):
-    """The 4-way dispatch after the router node. Returns node name(s); a list fans out."""
-    qt = state["query_type"]
+def _route_after_extract(state: AgentState):
+    """The dispatch after extract. Returns node name(s); a list fans out."""
+    qt = state["classification"]["query_type"]
     if qt == "out_of_scope":
         return "fallback"
     if qt == "rights_info":
         return "rag"
-    if qt == "mixed":
-        return "planner"
-    return ["rag", "calculator"]  # compensation_calc → fan-out
+    return ["rag", "calculator"]  # compensation_calc / mixed → fan-out
 
 
 def _route_after_rag(state: AgentState) -> str:
     """rights_info answers straight from RAG; the comp/mixed paths feed eligibility."""
-    return "synthesize" if state["query_type"] == "rights_info" else "eligibility"
+    return "synthesize" if state["classification"]["query_type"] == "rights_info" else "eligibility"
 
 
 def build_agent_graph():
     """Build and compile the main agent graph."""
-    from langgraph.graph import END, START, StateGraph
-
     g = StateGraph(AgentState)
-    g.add_node("intake", intake)
-    g.add_node("router", router)
-    g.add_node("planner", planner)
+    g.add_node("classify", classify)
+    g.add_node("extract", extract)
     g.add_node("rag", rag)
     g.add_node("eligibility", eligibility)
     g.add_node("calculator", calculator)
@@ -402,11 +437,9 @@ def build_agent_graph():
     g.add_node("synthesize", synthesize, defer=True)
     g.add_node("fallback", fallback)
 
-    g.add_edge(START, "intake")
-    g.add_edge("intake", "router")
-    g.add_conditional_edges("router", _route_from_router, ["fallback", "rag", "planner", "calculator"])
-    g.add_edge("planner", "rag")        # fan-out branch 1 (→ eligibility after rag)
-    g.add_edge("planner", "calculator")  # fan-out branch 2 (independent)
+    g.add_edge(START, "classify")
+    g.add_edge("classify", "extract")
+    g.add_conditional_edges("extract", _route_after_extract, ["fallback", "rag", "calculator"])
     g.add_conditional_edges("rag", _route_after_rag, ["synthesize", "eligibility"])
     g.add_edge("eligibility", "synthesize")
     g.add_edge("calculator", "synthesize")
@@ -433,6 +466,6 @@ if __name__ == "__main__":
     )
     final = run_agent(q)
     print(f"\nQ: {q}\n")
-    print(f"query_type: {final.get('query_type')}")
+    print(f"query_type: {final.get('classification', {}).get('query_type')}")
     print(f"trace: {[s['node'] for s in final.get('trace', [])]}\n")
     print(final.get("final_answer", "(no answer)"))

@@ -101,7 +101,7 @@ def score_case(case: dict) -> dict:
     elapsed = time.perf_counter() - t0
 
     actual = {
-        "query_type": state.get("query_type"),
+        "query_type": (state.get("classification") or {}).get("query_type"),
         "eligible": (state.get("eligibility") or {}).get("eligible"),
         "amount_eur": _final_amount(state),
         "citations": state.get("rag_citations", []) or [],
@@ -137,6 +137,8 @@ def score_case(case: dict) -> dict:
             known_keys.add("eligibility")
         elif d == "amount":
             known_keys.add("amount")
+        elif d == "cite_correct":
+            known_keys.add("cite_correct")
 
     return {
         "id": case["id"],

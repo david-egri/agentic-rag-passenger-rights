@@ -85,15 +85,15 @@ def _flight_summary(details: dict) -> str:
 
 
 _AGENT_NODE_ICONS = {
-    "intake": "📥", "router": "🧭", "planner": "🗂️", "rag": "🔎",
+    "classify": "🏷️", "extract": "📥", "rag": "🔎",
     "eligibility": "⚖️", "calculator": "🧮", "synthesize": "🧩", "fallback": "🚫",
 }
 
 
 def render_agent_trace(steps: list[dict]):
     """Render the main agent run node-by-node — the "agent steps" panel that scores the
-    "demonstrate agent operation" requirement. Each of the 7 nodes prints what it decided;
-    the `rag` node drills down into the corrective-RAG subgraph (reusing render_rag_trace)."""
+    "demonstrate agent operation" requirement. Each node prints what it decided; the `rag`
+    node drills down into the corrective-RAG subgraph (reusing render_rag_trace)."""
     for i, s in enumerate(steps, 1):
         render_agent_step(i, s)
 
@@ -103,15 +103,11 @@ def render_agent_step(i: int, s: dict):
     render steps incrementally as the graph streams them (live "watch the agent work")."""
     node = s["node"]
     head = f"{_AGENT_NODE_ICONS.get(node, '•')} **{i}. {node}**"
-    if node == "intake":
+    if node == "classify":
         st.markdown(f"{head} → classified as `{s['query_type']}`")
+    elif node == "extract":
+        st.markdown(head)
         st.caption(f"flight details: {_flight_summary(s.get('flight_details') or {})}")
-    elif node == "router":
-        st.markdown(f"{head} → route `{s['route']}`")
-    elif node == "planner":
-        st.markdown(f"{head} → decomposed into {len(s['subtasks'])} subtasks")
-        for t in s["subtasks"]:
-            st.caption(f"• {t}")
     elif node == "rag":
         st.markdown(
             f"{head} → retrieved {s['n_docs']} passages, {s['rewrites']} rewrite(s), "
