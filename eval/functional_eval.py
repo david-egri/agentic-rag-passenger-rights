@@ -104,7 +104,7 @@ def score_case(case: dict) -> dict:
         "query_type": (state.get("classification") or {}).get("query_type"),
         "eligible": (state.get("eligibility") or {}).get("eligible"),
         "amount_eur": _final_amount(state),
-        "citations": state.get("rag_citations", []) or [],
+        "citations": state.get("citations", []) or [],
     }
 
     results: dict[str, bool | None] = {d: None for d in DIMENSIONS}

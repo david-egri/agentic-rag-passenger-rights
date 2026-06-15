@@ -283,21 +283,21 @@ def render_calculator_tab():
 
 def render_agent_tab():
     """Agent tab — the product. Runs the full agent graph and walks the nodes:
-    classify → extract → rag/eligibility ‖ calculator → synthesize, with the grounded
+    classify → {rights | extract → calculator ‖ eligibility} → synthesize, with the grounded
     final answer, citations, and the 'not legal advice' disclaimer."""
     st.subheader("Agent")
     st.caption(
-        "The full agentic-RAG graph (`src/graph.py`): classify detects the intent signals and "
-        "extract pulls the flight details, then `mixed`/`compensation_calc` fan out to an "
-        "eligibility branch (RAG → eligibility) and the deterministic calculator, and synthesize "
-        "gates and composes the answer. Watch every node below."
+        "The full agentic-RAG graph (`src/graph.py`): classify detects the three intent signals "
+        "and routes on them — the rights pipeline answers via corrective RAG, while the amount "
+        "pipeline runs extract, then the deterministic calculator alongside a cause-specific "
+        "eligibility check. synthesize gates the amount and composes the answer. Watch every node below."
     )
 
     with st.expander("📊 Graph structure (the wiring behind the agent)", expanded=False):
         st.caption(
             "Generated live from the compiled graph (`agent_graph.get_graph().draw_mermaid()`), "
             "so it always matches the code. Solid edges are unconditional; dashed edges are "
-            "conditional routes. The `rag` node invokes the corrective-RAG subgraph (not shown)."
+            "conditional routes. The `rights` node invokes the corrective-RAG subgraph (not shown)."
         )
         from src.graph import agent_graph
 
@@ -312,20 +312,20 @@ def render_agent_tab():
     # through agent_graph to confirm it routes/computes as intended (the 3B classifier is
     # fickle — several plausible questions misrouted and were dropped). Grouped by path:
     examples = [
-        # rights_info → rag → synthesize
+        # asks_rights → rights → synthesize
         "What are my rights if my flight is cancelled?",
         "What assistance must an airline provide during a long delay?",
-        # compensation_calc → calculator ‖ rag→eligibility → synthesize (distance bands, threshold, reduction, denied boarding)
+        # asks_amount → extract → calculator ‖ eligibility → synthesize (distance bands, threshold, reduction, denied boarding)
         "My flight from Budapest to London was delayed 4 hours. How much compensation do I get?",          # short-haul → €250
         "My Athens to London flight was delayed 4 hours — what compensation am I owed?",                    # medium-haul → €400
         "My Frankfurt to Bangkok flight arrived 5 hours late. How much am I entitled to?",                  # long-haul → €600
         "My Paris to Amsterdam flight was delayed 2 hours — am I owed compensation?",                       # under the 3 h threshold → €0
         "I was denied boarding on my Vienna to London flight because it was overbooked. How much can I claim?",  # denied boarding → €250
         "My Lisbon to Paris flight was cancelled, but I was rerouted and arrived only 2 hours late. What compensation applies?",  # 50% reduction → €125
-        # mixed → calculator ‖ rag→eligibility → synthesize (eligibility gate)
+        # asks_rights + asks_amount → rights ‖ (extract → calculator ‖ eligibility) → synthesize (eligibility gate)
         "My Paris to Rome flight was cancelled due to an airline staff strike and I got in 6 hours late — am I entitled to anything, and how much?",  # own-staff strike = compensable → €250
         "My Madrid to New York flight was cancelled because of a snowstorm. What are my rights and how much am I owed?",  # weather = extraordinary → €0
-        # out_of_scope → fallback (hallucination firewall)
+        # ¬in_scope → fallback (hallucination firewall)
         "How much does it cost to bring a dog on the flight?",
         "Does EU passenger rights law cover my lost or damaged luggage?",
     ]
@@ -345,7 +345,7 @@ def render_agent_tab():
         # overwritten each step). Both created up front so they keep their position on top.
         status = st.status("Running the agent graph…", expanded=True)
         state_status = st.status("Live `AgentState` (raw)", expanded=False)
-        state_status.caption("Raw state, minus `trace` and `retrieved_docs` (shown in the trace above / passages below)")
+        state_status.caption("Raw state, minus `trace`, `rag_docs`, and `eligibility_docs` (shown in the trace above / passages below)")
         state_box = state_status.empty()  # placeholder inside the state block, overwritten each step
         final = None
         rendered = 0  # how many trace steps we've already drawn (the trace is append-only)
@@ -356,7 +356,7 @@ def render_agent_tab():
                 for i in range(rendered, len(trace)):
                     render_agent_step(i + 1, trace[i])
             rendered = len(trace)
-            state_box.json({k: v for k, v in state.items() if k not in ("trace", "retrieved_docs")})
+            state_box.json({k: v for k, v in state.items() if k not in ("trace", "rag_docs", "eligibility_docs")})
         status.update(label="Agent run complete", state="complete")
         state_status.update(label="Final `AgentState` (raw)", state="complete")
     except Exception as exc:
@@ -368,13 +368,21 @@ def render_agent_tab():
 
     st.markdown("#### Answer")
     st.markdown(final.get("final_answer", "_(no answer)_"))
-    render_citations(final.get("rag_citations", []))
+    render_citations(final.get("citations", []))
     render_disclaimer()
 
-    docs = final.get("retrieved_docs", [])
-    if docs:
-        with st.expander(f"Retrieved passages ({len(docs)})", expanded=False):
-            for d in docs:
+    # The two grounded retrievals are shown separately: the rights answer's evidence and the
+    # eligibility judgment's cause-specific evidence (the latter is what backs a gated-to-€0 reply).
+    rag_docs = final.get("rag_docs", [])
+    if rag_docs:
+        with st.expander(f"Rights passages ({len(rag_docs)})", expanded=False):
+            for d in rag_docs:
+                render_chunk_card(d, show_distance=True)
+
+    elig_docs = final.get("eligibility_docs", [])
+    if elig_docs:
+        with st.expander(f"Eligibility passages ({len(elig_docs)})", expanded=False):
+            for d in elig_docs:
                 render_chunk_card(d, show_distance=True)
 
 
