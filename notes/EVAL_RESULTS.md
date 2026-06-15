@@ -31,18 +31,22 @@ python -m eval.loadtest               # load test (50–200 queries) → timing/
 - **Scored dimensions** (only those a case pins): routing, eligibility, amount (the *gated*
   final figure), citation presence (guardrail), citation correctness (`any_of`,
   source + article, set-membership / recall).
-- **Known-fails** (the two spot-check findings) are scored like any case but reported
+- **Known-fails** (the spot-check finding) are scored like any case but reported
   separately, so the baseline distinguishes a *documented gap* from a *new regression*.
 
-### Baseline (2026-06-14, `qwen2.5:3b-instruct`, temperature 0)
+### Baseline (2026-06-15, `qwen2.5:3b-instruct`, temperature 0)
 
-Measured on the post-refactor graph — `intake` split into `classify` + `extract` (both
-`with_structured_output`), `router`/`planner` removed. Supersedes the pre-refactor baseline of
-2026-06-04 (routing 10/14, overall 10/13), whose weak dimension this refactor targeted.
+Measured on the **v2 capability-routed graph**: `classify` routes directly on its three intent
+signals (`in_scope` / `asks_rights` / `asks_amount`) to `{rights | extract → calculator ‖
+eligibility} → synthesize`. `extract` runs **only on the amount path**; the corrective-RAG
+`rights` node runs **only when `asks_rights`**; `eligibility` grounds its own cause-specific
+retrieval (retrieve-only — no `generate`). Supersedes the 2026-06-14 classify/extract baseline
+(same correctness, wall ≈ 324 s); the topology changes here are a **latency** win (see §2), not a
+correctness one.
 
 | Dimension | Score | Notes |
 |---|---|---|
-| Routing | **15/15 (100%)** | the former weak spot — fixed by the structured-output `classify` |
+| Routing | **15/15 (100%)** | signal-based routing; `query_type` is now a report-only label |
 | Eligibility | **9/9 (100%)** | own-staff strike → eligible; weather/ATC → not |
 | Amount (gated) | **9/9 (100%)** | all bands + sub-threshold + gating correct |
 | Citation presence | **7/7 (100%)** | every rights/mixed answer carries ≥1 citation |
@@ -51,28 +55,36 @@ Measured on the post-refactor graph — `intake` split into `classify` + `extrac
 - **Overall (excl. known-fails): 14/14 cases fully pass.**
 - **Known-fails: 1/1 dimension failed exactly as documented** (scope-asymmetry citation
   correctness) — the eval set still pins it, distinguishing the documented gap from a regression.
-- Wall time ≈ 324 s for 15 cases (avg ≈ 22 s/case); out_of_scope cases are ≈ 8 s vs. ≈ 20–29 s
-  for RAG/generation cases. (out_of_scope now runs two LLM calls — `classify` **and** `extract` —
-  before it can route to `fallback`, up from one `intake` call; see §2.)
+- Wall time ≈ 197 s for 15 cases (avg ≈ 13 s/case), **down from ≈ 324 s** on the previous
+  topology. Per-route timing now reflects the conditional pipelines:
+  `out_of_scope` ≈ **3 s** (just `classify` → `fallback` — `extract` no longer runs before the
+  route is known), pure `compensation_calc` ≈ **8–9 s** (no `rights`/RAG call), `rights_info`
+  ≈ 14–18 s, `mixed` ≈ 26–27 s (both pipelines run). See §2 for the per-node breakdown.
 
 ### Findings
 
-**F-ROUTING — RESOLVED (2026-06-14).** The pre-refactor baseline routed only 10/14 correctly:
-the single `intake` LLM call pulled a query toward "compensation" whenever it mentioned a
-disruption **and** a money/refund word (every miss collapsed `rights_info`/`mixed` into
-`compensation_calc`). The fix predicted in that baseline has landed — `intake` was split into a
-`classify` node that emits three independent boolean signals (`in_scope` / `asks_rights` /
-`asks_amount`) via `with_structured_output`, with `query_type` derived from them in code. Routing
-rose to **15/15 (100%)**; the four former misroutes (`cancel-refund`, `delay-care`,
-`mixed-own-strike`, `scope-asymmetry`) all route correctly now. The ATC eligibility blind spot
-was fixed in the same pass: `mixed-atc-restrictions` gates to €0 and is relabelled
-`compensation_calc`, matching its amount-only phrasing.
+**F-ROUTING — RESOLVED (held since 2026-06-14).** Routing is **15/15**. The 2026-06-14 refactor
+fixed the original `intake` misrouting by emitting three independent boolean signals via
+`with_structured_output` and deriving the lane in code. The v2 change keeps that classifier
+untouched and simply **routes on the booleans directly** rather than on the derived `query_type`
+label (now report-only) — so routing accuracy is unchanged while the four-way label no longer
+steers control flow.
+
+**F-CAUSE-SPECIFICITY — eligibility correctness depends on `extract` keeping the cause specific.**
+The eligibility verdict turns on the own-staff-vs-third-party distinction, which lives entirely in
+the extracted `reason`. A run where `extract` flattened "a strike by the airline's **own cabin
+crew**" to a bare "airline staff strike" mis-judged `mixed-own-strike` as extraordinary (→ €0). The
+fix was in `extract`, not the eligibility grounding: the prompt now captures any stated cause *as
+stated and specific* (preserving who is striking). With the specific cause, the verdict is correct
+in every grounding configuration — even with no retrieved context — and is stable across re-runs.
+The eligibility judgment is the most variance-prone dimension on a 3B model; this is the lever to
+watch on re-runs.
 
 **F-SCOPE-CITATION — the residual scope-asymmetry gap is citation correctness, not routing.**
-With routing fixed, the coverage question ("New York → Paris on a US carrier") now classifies as
-`rights_info` correctly, but retrieval still doesn't surface Art. 3 / the EUR-Lex summary for it,
-so `cite_correct` misses. This is the one remaining documented known-fail — tracked against the
-corpus/retrieval, not the graph.
+The coverage question ("New York → Paris on a US carrier") classifies as `rights_info` correctly,
+but retrieval still doesn't surface Art. 3 / the EUR-Lex summary for it, so `cite_correct` misses.
+This is the one remaining documented known-fail — tracked against the corpus/retrieval, not the
+graph.
 
 ---
 
@@ -88,75 +100,80 @@ corpus/retrieval, not the graph.
   reproducible — no randomness).
 - **Per-node timing** via LangGraph `stream_mode="debug"` (paired `task`/`task_result`
   timestamps), layered *alongside* the semantic `trace` (which lives on `AgentState`), not
-  stuffed into it. The `rag` node's time bundles the whole corrective-RAG subgraph (its
-  internal retrieve/grade/generate aren't split out at the main-graph level).
+  stuffed into it. The `rights` node's time bundles the whole corrective-RAG subgraph (its
+  internal retrieve/grade/generate aren't split out at the main-graph level); `eligibility` is a
+  cause-specific vector retrieval plus one LLM judgment.
 
-### Results (N=50, 2026-06-14, `qwen2.5:3b-instruct`, temperature 0)
+### Results (N=50, 2026-06-15, `qwen2.5:3b-instruct`, temperature 0)
 
-Post-refactor topology (`classify` + `extract` replace `intake`; no `planner`/`router`).
-Supersedes the pre-refactor run of 2026-06-04 (wall 890.7 s, mean latency 17.8 s).
+v2 capability-routed topology (conditional `rights` and `extract`; retrieve-only eligibility).
+Supersedes the 2026-06-14 classify/extract run (wall 1204.9 s, mean latency 24.1 s).
 
-- **Wall time 1204.9 s**, throughput **0.041 q/s** (~2.5 queries/min).
-- **End-to-end latency (s):** mean **24.1**, p50 **25.1**, p90 **32.0**, p95 **36.3**, max
-  **38.2**, min **7.82** (the out_of_scope path — now two LLM calls before `fallback`).
+- **Wall time 788.2 s**, throughput **0.063 q/s** (~3.8 queries/min) — **−35 %** wall vs the
+  previous topology.
+- **End-to-end latency (s):** mean **15.76**, p50 **14.76**, p90 **27.0**, p95 **32.4**, max
+  **36.3**, min **3.08** (the `out_of_scope` path — now a single `classify` call before `fallback`).
+  Mean latency fell **24.1 → 15.76 s (−35 %)**.
 
 | node | kind | calls | total s | mean s | share |
 |---|---|---:|---:|---:|---:|
-| `rag` | LLM | 44 | 660.5 | 15.01 | **54.8%** |
-| `extract` | LLM | 50 | 262.9 | 5.26 | **21.8%** |
-| `classify` | LLM | 50 | 198.9 | 3.98 | **16.5%** |
-| `eligibility` | LLM* | 28 | 82.3 | 2.94 | 6.8% |
-| `calculator` | — | 28 | 0.19 | 0.007 | 0.0% |
+| `rights` | LLM | 22 | 377.9 | 17.18 | **45.7%** |
+| `classify` | LLM | 50 | 193.6 | 3.87 | **23.4%** |
+| `extract` | LLM | 28 | 177.9 | 6.35 | **21.5%** |
+| `eligibility` | LLM* | 28 | 76.9 | 2.75 | 9.3% |
+| `calculator` | — | 28 | 0.12 | 0.004 | 0.0% |
 | `synthesize` | — | 44 | 0.02 | 0.000 | 0.0% |
 | `fallback` | — | 6 | 0.00 | 0.000 | 0.0% |
 
-\* `eligibility` is LLM **only when a cause is stated**; the no-cause path is deterministic.
-(Fewer calls than the pre-refactor run — 28 vs 40 — because better routing no longer over-routes
-`rights_info` queries into the eligibility branch; the higher mean reflects that the remaining
-calls are disproportionately the stated-cause ones that do hit the LLM.)
+\* `eligibility` is LLM **only when a cause is stated**; the no-cause path is deterministic (no
+retrieval, no LLM). Call counts follow directly from the routing: `rights` fires on the 22
+`asks_rights` runs, `extract`/`calculator`/`eligibility` on the 28 `asks_amount` runs, `classify`
+on all 50, `fallback` on the 6 `out_of_scope` runs, and `synthesize` on the 44 non-fallback runs.
 
 ### Bottleneck
 
-**The bottleneck is local-LLM generation, full stop — LLM nodes are 100.0% of node time;
-everything non-LLM is 0.21 s total (0.0%).** This confirms the CLAUDE.md prediction (calculator +
-vector search + assembly negligible). The shape:
-- **`rag` (54.8%)** is still the single dominant cost — ≥2 LLM calls (grade + generate) plus
-  another grade+generate on each corrective rewrite. Its *share* fell from 69% only because the
-  intake split added a second per-query call below it; its absolute cost is unchanged (~15 s/call).
-- **`classify` + `extract` (38.3% combined, ~9.2 s/query)** are the cost of the refactor: the
-  former single `intake` call (~4.3 s, 24%) became two structured-output calls. This is the
-  **latency price of the routing-accuracy win** (10/14 → 15/15) — it pushed mean latency
-  17.8 → 24.1 s and wall time 890 → 1205 s. The two classification calls per query, not RAG, are
-  the new swing factor.
-- **Non-LLM nodes are free**: `calculator` 0.19 s over 28 calls, `synthesize`/`fallback` are
-  rounding error. The only lever remains the **number and cost of LLM calls**.
+**Still local-LLM generation, full stop — LLM nodes are 100.0% of node time; everything non-LLM is
+0.14 s total (0.0%).** This confirms the CLAUDE.md prediction (calculator + vector search +
+assembly negligible). What changed is the **call mix**, because the pipelines are now conditional:
+- **`rights` (45.7%)** is again the single dominant cost (~17 s/call: grade + generate, plus a
+  grade+generate per corrective rewrite), but it now fires on only **22 of 50** runs — the
+  `asks_rights` ones — instead of 44. Pure-amount queries skip it entirely.
+- **`classify` (23.4%)** is the new universal floor: one ~3.9 s call on **every** query, the only
+  node that always runs. It is now the largest *unavoidable* per-query cost.
+- **`extract` (21.5%)** runs on only the **28** amount-path runs (was all 50), so rights-only and
+  out-of-scope queries no longer pay its ~6.3 s.
+- **`eligibility` (9.3%)** is unchanged in call count (28) and per-call cost (~2.7 s); the
+  retrieve-only grounding keeps the vector search negligible and avoids a second generation.
+- **Non-LLM nodes are free**: `calculator` 0.12 s over 28 calls, `synthesize`/`fallback` rounding
+  error. The only lever remains the **number and cost of LLM calls**.
 
 ### Optimizations
 
-**A — already in the design; the load test quantifies the payoff.**
-1. **Deterministic no-cause eligibility**: the no-cause path skips the LLM entirely; only 28 of
-   50 runs reach `eligibility` at all, and the stated-cause subset averages ~2.9 s — forcing
-   every eligibility call through the LLM would add an estimated ~60–80 s to the 50-run wall time.
-2. **LLM-free `synthesize`**: assembling the final answer adds **0.02 s** over 44 calls — a
-   second generative pass here would have been ~15 s × 44 ≈ ~660 s and a fresh hallucination surface.
-3. **out_of_scope short-circuit to `fallback`** (no LLM): those runs complete in ~7.8 s vs the
-   ~24 s mean — still a win, but smaller than before because `classify` **and** `extract` both
-   run before the route is known (see lever C).
+**A — built into the design; the load test quantifies the payoff.**
+1. **Deterministic no-cause eligibility**: the no-cause path skips the LLM (and retrieval)
+   entirely; only the stated-cause subset hits the LLM, averaging ~2.7 s.
+2. **LLM-free `synthesize`**: assembling the final answer adds **0.02 s** over 44 calls — a second
+   generative pass here would have been ~17 s × 44 ≈ ~750 s and a fresh hallucination surface.
+3. **`out_of_scope` short-circuit to `fallback`** (no LLM): those runs complete in ~3.1 s vs the
+   ~15.8 s mean — and the win is **bigger again** now that `extract` no longer runs before the
+   route is known (it was ~8 s on the previous topology).
 
-**B — conditional RAG for pure `compensation_calc` (a graph change).** `rag` is ~55% of the cost,
-yet a pure `compensation_calc` answer's amount is deterministic (calculator) and its eligibility
-is usually the no-cause deterministic path, so the RAG subgraph there mainly produces *optional*
-citations (eval pins `required: false` for calc-only cases). Making the RAG branch **conditional**
-— skip it for pure `compensation_calc`, keep it for `rights_info`/`mixed` — would remove one
-~15 s subgraph call from every calc query. Touches `_route_after_extract` + the eligibility
-branch's doc dependency + citation expectations; tracked as a GitHub issue, to be re-measured here.
+**B — conditional RAG for pure `compensation_calc` — DONE this round.** The v2 routing sends a
+pure-amount query straight to `extract → calculator ‖ eligibility`, skipping the `rights`/RAG node;
+its citations (eval pins `required: false` for calc-only cases) come from eligibility's own
+cause-specific retrieval when a cause is stated. Payoff: `rights` calls fell **44 → 22**, removing
+one ~17 s subgraph call from every pure-amount query.
 
-**C — make `extract` conditional (new, surfaced by this run).** `extract` now runs on **every**
-query before the route is decided, but only `compensation_calc`/`mixed` actually need flight
-details — `rights_info` and `out_of_scope` discard them. Re-wiring to
-`classify → (out_of_scope → fallback | rights_info → rag | comp/mixed → extract → …)` would skip a
-~5.3 s LLM call on every rights/out-of-scope query, clawing back most of the latency the intake
-split added on those routes (e.g. out_of_scope back toward ~3–4 s). Tracked as a GitHub issue.
+**C — conditional `extract` — DONE this round.** `extract` now runs only on the amount path, not on
+every query. Payoff: `extract` calls fell **50 → 28**, and `out_of_scope` dropped back to ~3 s
+(`classify` → `fallback`, no extraction). Together B and C cut wall time **1205 → 788 s** and mean
+latency **24.1 → 15.8 s**.
+
+**D — remaining levers (open).** With B and C shipped, the dominant costs are the two nodes that
+are hard to avoid: the `rights` corrective-RAG subgraph (~17 s when it runs) and the universal
+`classify` floor (~3.9 s on every query). Further wins would have to target the **RAG loop itself**
+(e.g. cheaper grading, or capping rewrites harder) or fold the work of `classify` — neither is a
+routing change. Tracked as GitHub issues, to be re-measured here.
 
 ---
 
@@ -171,58 +188,50 @@ A non-technical distillation of the two sections above — the same facts, no ja
   correct — 100%. €250 / €400 / €600 / €0, and whether weather or strikes count, is rock-solid.
 - **The grounding is always right.** Every rights answer came with a real citation to the law —
   no made-up answers.
-- **Sorting questions into the right lane — now fixed.** It used to route only about 7 of 10
-  questions correctly (mixing a problem with "refund" or "how much" tipped it toward a money
-  question); after this refactor it's **15 of 15**. The fix was to stop letting the model reply
-  free-form and instead have it tick three yes/no boxes, from which the lane is worked out in code.
-- **One of the two known blind spots is now fixed; one remains.** The air-traffic-control case
-  (it used to wrongly grant compensation) is corrected. The remaining gap is the "am I even
-  covered?" coverage question: it's now sorted into the right lane, but the system still doesn't
-  pull up the exact article that backs the answer.
+- **Sorting questions into the right lane stays at 15 of 15.** The system has the model tick three
+  yes/no boxes about a question, and now steers entirely off those boxes (the old four-way label is
+  kept only for display).
+- **One blind spot to watch.** Whether a strike counts hinges on *who* is striking — the airline's
+  own crew (you're owed money) vs. a third party (you're not). The system now makes sure it captures
+  that "who" precisely when reading the question; if it ever loses that detail, the strike answer
+  can flip. The remaining known gap is the "am I even covered?" coverage question: it's sorted into
+  the right lane, but the system still doesn't pull up the exact article that backs the answer.
 
 **Is it fast enough? (load test)**
-- **One query takes ~24 seconds** on this hardware (up from ~18 s before the refactor).
+- **One query now takes ~16 seconds** on this hardware — **down from ~24 s** last round.
 - **All of that time is the AI model thinking.** The math, the database, and the answer-assembly
-  are basically instant (a fraction of a second combined). The system is slow *only* because of
-  the local AI model — not because of any inefficiency in our code.
-- **The most expensive single step is reading the law and writing the grounded answer** (~55%).
-- **The accuracy fix cost some speed.** Making the model "tick boxes" split one ~4-second step
-  into two (~9 seconds total per query), which is why each query went from ~18 s to ~24 s — a
-  deliberate trade: better routing for a few seconds more.
+  are basically instant (a fraction of a second combined). The system is slow *only* because of the
+  local AI model — not because of any inefficiency in our code.
+- **The most expensive single step is reading the law and writing the grounded answer** (~46%) —
+  but it now only runs when a question actually asks about rights.
+- **We made it faster by doing less work per question.** Money-only questions skip the law-reading
+  step; rights-only and off-topic questions skip the flight-detail-extraction step; off-topic
+  questions bail out after a single step (~3 s). Those three "only do what this question needs"
+  changes are what cut a typical query from ~24 s to ~16 s.
 
-**Bottom line:** accurate where it counts (amounts, eligibility, citations), and slow only
-because of the local AI model.
+**Bottom line:** accurate where it counts (amounts, eligibility, citations), faster than last round,
+and slow only because of the local AI model.
 
 ### What to improve next
 
-**Done this round — sorting questions into lanes (accuracy).** The model used to misfile some
-questions; we stopped letting it reply free-form and made it tick three yes/no boxes, working out
-the lane in code. Routing went from ~7/10 to 15/15.
+**Done this round — only do the expensive steps when the question needs them (speed).** Money-only
+questions no longer read the law; rights-only and off-topic questions no longer extract flight
+details. This is the speed work the previous baseline flagged as "still to do" — now shipped, for a
+~35% drop in both wall time and per-query latency.
 
-**Done this round — the air-traffic-control blind spot (accuracy).** It used to wrongly grant
-compensation for ATC delays (which are outside the airline's control); adding it as a worked
-example, alongside the weather / own-staff-strike examples, fixed it.
+**Done this round — keep the cause specific (accuracy).** The strike answer depends on *who* is
+striking; the question-reading step now preserves that detail so own-crew strikes are correctly
+treated as compensable.
 
 **Still to do — the coverage-citation blind spot (accuracy).** For "am I even covered?" questions
-about flights into the EU on a non-EU airline, the system now picks the right lane but doesn't
-surface the exact article that backs the answer. The fix lives in the corpus/retrieval, not the graph.
+about flights into the EU on a non-EU airline, the system picks the right lane but doesn't surface
+the exact article that backs the answer. The fix lives in the corpus/retrieval, not the graph.
 
-**Still to do — make money-only questions much faster (speed).** The slowest step (reading the
-law, ~55% of the time) runs even for pure "how much do I get?" questions, where the amount comes
-from the calculator, not the law text. Skipping it for amount-only questions would drop them sharply.
+**Still to do — the remaining speed levers are harder.** The two unavoidable costs left are reading
+the law (when rights are actually asked) and the always-on question-sorting step. Shaving those
+would mean a cheaper retrieval loop, not another routing change.
 
-**New target — don't extract flight details when they aren't needed (speed).** The refactor added
-a second model step that pulls flight details out of every question — but rights-only and
-off-topic questions throw those details away. Running that step only for money questions would win
-back most of the few seconds the accuracy fix cost on those routes.
-
-**Already done — just proven again this round.** Three speed shortcuts are built in (skip the
-model when no reason is given; assemble the final answer without the model; bail out fast on
-off-topic questions). The off-topic bail-out is now a smaller win, because the two new
-classification steps run before it.
-
-> **One line:** the accuracy fixes shipped this round (structured "tick-the-boxes" routing + the
-> ATC worked example) and routing is now 15/15; the open items are mostly **speed** — skip the
-> law-reading step and the detail-extraction step when a question doesn't need them. Tracked as
-> GitHub issues.
-
+> **One line:** correctness holds at 14/14 (+1 documented known-fail), and this round's win is
+> **speed** — making the law-reading and detail-extraction steps conditional cut a typical query
+> from ~24 s to ~16 s. The open items are the corpus-side citation gap and harder retrieval-loop
+> speedups, tracked as GitHub issues.
